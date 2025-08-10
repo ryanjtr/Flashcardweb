@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flash Cards • Học nhanh</title>
+<style>
+  :root {
+    --bg1:#0f172a; --bg2:#1e293b; --fg:#f1f5f9; --muted:#cbd5e1;
+    --panel:rgba(255,255,255,.06); --panel2:rgba(255,255,255,.1); --border:rgba(255,255,255,.18);
+    --accent:rgba(56,189,248,.25);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Helvetica,Arial,sans-serif;background:linear-gradient(135deg,var(--bg2),var(--bg1));color:var(--fg)}
+  header,footer{padding:10px 20px}
+  header h1{margin:0;font-size:1.4rem}
+  #stats{opacity:.9;margin-top:4px;font-size:.9rem}
+  main{display:flex;gap:20px;padding:20px;align-items:flex-start;flex-wrap:wrap}
+  .col{flex:1 1 360px;min-width:320px}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
+  .row{display:flex;gap:8px;align-items:center}
+  input,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:rgba(15,23,42,.5);color:var(--fg);outline:none}
+  input:focus,textarea:focus{box-shadow:0 0 0 2px var(--accent)}
+  .btn{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--fg);cursor:pointer}
+  .btn:hover{background:var(--panel2)}
+  #card{min-height:260px;position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;text-align:center}
+  #card .badge{position:absolute;left:10px;top:10px;display:flex;gap:6px;align-items:center}
+  .ipa{font-size:.8rem;background:rgba(0,0,0,.35);padding:2px 6px;border-radius:6px}
+  #loading{font-size:.9rem;color:var(--muted)}
+  .list{max-height:460px;overflow:auto}
+  .list-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:10px;background:var(--panel);border:1px solid var(--border);cursor:pointer;margin-bottom:6px}
+  .list-item.active{background:var(--accent)}
+  small{color:var(--muted)}
+  .kpx{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Flash Cards • Học nhanh</h1>
+  <div id="stats"></div>
+</header>
+
+<main>
+  <!-- Cột trái: xem & thao tác -->
+  <section class="col panel" style="display:flex;flex-direction:column;gap:12px;">
+    <div class="row">
+      <input id="search" placeholder="Tìm thẻ...">
+      <button id="exportBtn" class="btn" title="Xuất JSON">Xuất</button>
+      <label class="btn" title="Nhập JSON" style="cursor:pointer">
+        Nhập <input id="importFile" type="file" accept=".json,application/json" hidden>
+      </label>
+    </div>
+
+    <div id="card" class="panel" style="min-height:280px">
+      <div class="badge">
+        <span id="cardIpa" class="ipa"></span>
+        <button id="speakBtn" class="btn" title="Phát âm">🔊</button>
+      </div>
+      <div style="position:absolute;right:10px;top:10px;"><small>Nhấn để lật • Space / Enter</small></div>
+      <div id="cardContent" style="white-space:pre-line;font-size:1.6rem;line-height:1.4"></div>
+    </div>
+
+    <div class="kpx" style="justify-content:center">
+      <button id="unknownBtn" class="btn" title="D">Chưa thuộc</button>
+      <button id="flipBtn" class="btn">Lật thẻ</button>
+      <button id="knownBtn" class="btn" title="A">Đã thuộc</button>
+      <span id="loading" hidden>Đang lấy IPA/ví dụ…</span>
+    </div>
+  </section>
+
+  <!-- Cột phải: thêm & danh sách -->
+  <aside class="col" style="display:flex;flex-direction:column;gap:12px;">
+    <div class="panel">
+      <h3 style="margin:6px 0 10px">Thêm từ mới</h3>
+      <input id="inFront" placeholder="Thông tin 1 (Mặt trước) — tự thêm IPA & phát âm">
+      <div id="frontHint"><small></small></div>
+      <textarea id="inBack" rows="4" placeholder="Thông tin 2 (Mặt sau) — nghĩa/ghi chú"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="addBtn" class="btn" style="flex:1" title="N">Thêm từ</button>
+        <button id="clearBtn" class="btn">Xoá nhập</button>
+      </div>
+      <div style="margin-top:6px"><small>Mẹo: A = Đã thuộc, D = Chưa thuộc, Space/Enter = Lật, N = Nhập nhanh</small></div>
+    </div>
+
+    <div class="panel">
+      <h3 style="margin:6px 0 10px">Danh sách thẻ</h3>
+      <div id="list" class="list"></div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  © 2025 — Lưu tự động trong trình duyệt • Có IPA & phát âm
+</footer>
+
+<script>
+/* ====== State & Storage ====== */
+const STORAGE_KEY = 'flashcards_v3_plain';
+let cards = loadInitial();
+let currentId = cards[0]?.id || null;
+let flipped = false;
+
+const el = {
+  search: document.getElementById('search'),
+  exportBtn: document.getElementById('exportBtn'),
+  importFile: document.getElementById('importFile'),
+  card: document.getElementById('card'),
+  cardContent: document.getElementById('cardContent'),
+  cardIpa: document.getElementById('cardIpa'),
+  speakBtn: document.getElementById('speakBtn'),
+  knownBtn: document.getElementById('knownBtn'),
+  unknownBtn: document.getElementById('unknownBtn'),
+  flipBtn: document.getElementById('flipBtn'),
+  inFront: document.getElementById('inFront'),
+  inBack: document.getElementById('inBack'),
+  frontHint: document.getElementById('frontHint'),
+  addBtn: document.getElementById('addBtn'),
+  clearBtn: document.getElementById('clearBtn'),
+  list: document.getElementById('list'),
+  stats: document.getElementById('stats'),
+  loading: document.getElementById('loading')
+};
+
+function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36) }
+function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(cards)) }
+function loadInitial(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return sample();
+    const d = JSON.parse(raw);
+    return Array.isArray(d) && d.length ? d : sample();
+  }catch(_){ return sample() }
+}
+function sample(){
+  return [
+    { id:uid(), front:"hello", back:"xin chào", known:0, unknown:0, last:0, ipa:"/həˈləʊ/", audio:"", example:"Hello! Nice to meet you." },
+    { id:uid(), front:"embedded", back:"nhúng (kỹ thuật)", known:0, unknown:0, last:0, ipa:"/ɪmˈbɛdɪd/", audio:"", example:"" },
+  ];
+}
+
+/* ====== Dictionary (IPA + audio + example-if-any) ====== */
+async function fetchDictionary(term){
+  const q = String(term || '').trim();
+  if(!q) return { ipa:'', audio:'', example:'', pos:[] };
+  try{
+    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(q)}`);
+    if(!res.ok) throw new Error('no def');
+    const data = await res.json();
+    const entry = Array.isArray(data) && data[0] ? data[0] : null;
+
+    let ipa='', audio='', example='', pos=[];
+    if(entry?.phonetics?.length){
+      const p = entry.phonetics.find(x=>x.text) || entry.phonetics[0];
+      ipa = p?.text || '';
+      const pa = entry.phonetics.find(x=>x.audio) || p;
+      audio = pa?.audio || '';
+    }
+    if(entry?.meanings?.length){
+      pos = entry.meanings.map(m=>m.partOfSpeech).filter(Boolean);
+      const defWithEx = entry.meanings.flatMap(m => m.definitions || []).find(d => d.example);
+      if(defWithEx?.example) example = defWithEx.example; // chỉ dùng ví dụ từ API
+    }
+    return { ipa, audio, example, pos };
+  }catch(e){
+    return { ipa:'', audio:'', example:'', pos:[] };
+  }
+}
+
+/* ====== Rendering ====== */
+function currentCard(){ return cards.find(c => c.id === currentId) }
+
+function buildBackHTML(back, example){
+  // Trả về HTML cho mặt sau; chỉ hiện "Ví dụ" khi có
+  if(example){
+    return `${escapeHTML(back)}\n\n${wrapSmall('Ví dụ: ' + example)}`;
+  }
+  return escapeHTML(back);
+}
+
+function renderCard(){
+  const c = currentCard();
+  if(!c){
+    el.cardContent.textContent = "Chưa có thẻ nào. Hãy thêm từ ở bên phải.";
+    el.cardIpa.textContent = '';
+    return;
+  }
+  el.cardIpa.textContent = c.ipa || '';
+  if(flipped){
+    el.cardContent.innerHTML = buildBackHTML(c.back, c.example);
+  }else{
+    el.cardContent.textContent = c.front;
+  }
+}
+
+function renderList(){
+  el.list.innerHTML = '';
+  const q = el.search.value.trim().toLowerCase();
+  const filtered = cards.filter(c => !q || c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q));
+  filtered.forEach(c=>{
+    const div = document.createElement('div');
+    div.className = 'list-item' + (c.id===currentId ? ' active' : '');
+    div.innerHTML = `<span>${escapeHTML(c.front)} ${c.ipa?`<small>${escapeHTML(c.ipa)}</small>`:''}</span>
+                     <span><small>${c.known}✓ ${c.unknown}×</small></span>`;
+    div.onclick = ()=>{ currentId = c.id; flipped = false; renderCard(); renderList(); };
+    el.list.appendChild(div);
+  });
+  const total = cards.length;
+  const k = cards.reduce((s,x)=>s+x.known,0);
+  const u = cards.reduce((s,x)=>s+x.unknown,0);
+  el.stats.textContent = `Tổng: ${total} • Đã thuộc: ${k} • Chưa thuộc: ${u}`;
+}
+
+/* ====== Actions ====== */
+function nextCard(){
+  if(!cards.length) return;
+  const idx = cards.findIndex(c => c.id === currentId);
+  const next = (idx >= 0 ? (idx+1) % cards.length : 0);
+  currentId = cards[next].id;
+  flipped = false;
+  renderCard();
+}
+
+function mark(isKnown){
+  const c = currentCard(); if(!c) return;
+  if(isKnown) c.known++; else c.unknown++;
+  c.last = Date.now();
+  save();
+  nextCard();
+  renderList();
+}
+
+async function enrichCardById(id, front, back){
+  el.loading.hidden = false;
+  const d = await fetchDictionary(front);
+  const idx = cards.findIndex(c => c.id === id);
+  if(idx >= 0){
+    const old = cards[idx];
+    cards[idx] = {
+      ...old,
+      ipa: d.ipa || old.ipa,
+      audio: d.audio || old.audio,
+      example: d.example || ''   // chỉ dùng ví dụ từ API; có thì hiển thị, không có thì để trống
+    };
+    save();
+    if(currentId === id) renderCard();
+    renderList();
+  }
+  el.loading.hidden = true;
+}
+
+/* ====== Utils ====== */
+function escapeHTML(s){
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
+
+/* ====== Import/Export ====== */
+function exportJSON(){
+  const blob = new Blob([JSON.stringify(cards, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'flashcards.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+function importJSON(file){
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const data = JSON.parse(String(e.target?.result || '[]'));
+      if(!Array.isArray(data)) return;
+      const norm = data
+        .filter(x => x && (x.front||x.term||x.q) && (x.back||x.def||x.a))
+        .map(x => ({
+          id: uid(),
+          front: x.front ?? x.term ?? x.q,
+          back:  x.back  ?? x.def  ?? x.a,
+          known: Number(x.known)||0,
+          unknown: Number(x.unknown)||0,
+          last: Number(x.last)||0,
+          ipa: x.ipa || '',
+          audio: x.audio || '',
+          example: x.example || ''
+        }));
+      if(norm.length){
+        cards = norm;
+        currentId = cards[0].id;
+        flipped = false;
+        save(); renderCard(); renderList();
+      }
+    }catch(err){ console.error(err); }
+  };
+  reader.readAsText(file);
+}
+
+/* ====== Events ====== */
+el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
+el.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
+el.knownBtn.onclick = ()=> mark(true);
+el.unknownBtn.onclick = ()=> mark(false);
+el.search.oninput = renderList;
+
+el.addBtn.onclick = ()=>{
+  const f = el.inFront.value.trim();
+  const b = el.inBack.value.trim();
+  if(!f || !b) return;
+  const card = { id:uid(), front:f, back:b, known:0, unknown:0, last:0, ipa:'', audio:'', example:'' };
+  cards.unshift(card);
+  save();
+  currentId = card.id; flipped = false;
+  renderCard(); renderList();
+  enrichCardById(card.id, f, b);
+  el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML='';
+};
+el.clearBtn.onclick = ()=>{ el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML=''; el.inFront.focus(); };
+el.inFront.onblur = previewEnrichFront;
+el.speakBtn.onclick = (e)=>{
+  e.stopPropagation();
+  const c = currentCard(); if(!c) return;
+  if(c.audio){ new Audio(c.audio).play(); }
+  else{
+    try{
+      const u = new SpeechSynthesisUtterance(c.front);
+      u.lang = 'en-US'; u.rate = 1;
+      speechSynthesis.cancel(); speechSynthesis.speak(u);
+    }catch(_){}
+  }
+};
+el.exportBtn.onclick = exportJSON;
+el.importFile.onchange = (e)=>{ const f=e.target.files?.[0]; if(f) importJSON(f); };
+
+window.addEventListener('keydown', (e)=>{
+  const tag = e.target && e.target.tagName;
+  if(tag === 'INPUT' || tag === 'TEXTAREA') return;
+  const k = e.key.toLowerCase();
+  if(k === ' ' || k === 'enter'){ e.preventDefault(); flipped=!flipped; renderCard(); }
+  else if(k === 'a'){ mark(true); }
+  else if(k === 'd'){ mark(false); }
+  else if(k === 'n'){ el.inFront.focus(); }
+});
+
+/* Gợi ý IPA khi rời ô "Mặt trước" */
+async function previewEnrichFront(){
+  const f = el.inFront.value.trim();
+  if(!f){ el.frontHint.innerHTML=''; return; }
+  el.loading.hidden = false;
+  const d = await fetchDictionary(f);
+  el.frontHint.innerHTML = d.ipa ? `<small>IPA gợi ý: ${escapeHTML(d.ipa)}</small>` : '';
+  el.loading.hidden = true;
+}
+
+/* ====== Minimal Console Tests (không cần mạng) ======
+   - Đảm bảo buildBackHTML không chèn "Ví dụ" khi example rỗng
+   - Đảm bảo escapeHTML hoạt động
+*/
+(function selfTests(){
+  const t1 = buildBackHTML('mean', '').includes('Ví dụ') === false;
+  console.assert(t1, 'buildBackHTML should hide example when empty');
+
+  const t2 = escapeHTML('<b>&"\'') === '&lt;b&gt;&amp;&quot;&#39;';
+  console.assert(t2, 'escapeHTML should encode HTML entities');
+})();
+
+/* ====== Init ====== */
+renderCard(); renderList();
+</script>
+</body>
+</html>
