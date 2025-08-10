@@ -17,9 +17,9 @@
   main{display:flex;gap:20px;padding:20px;align-items:flex-start;flex-wrap:wrap}
   .col{flex:1 1 360px;min-width:320px}
   .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
-  .row{display:flex;gap:8px;align-items:center}
-  input,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:rgba(15,23,42,.5);color:var(--fg);outline:none}
-  input:focus,textarea:focus{box-shadow:0 0 0 2px var(--accent)}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input,textarea,select{width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:rgba(15,23,42,.5);color:var(--fg);outline:none}
+  input:focus,textarea:focus,select:focus{box-shadow:0 0 0 2px var(--accent)}
   .btn{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--fg);cursor:pointer}
   .btn:hover{background:var(--panel2)}
   #card{min-height:260px;position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;text-align:center}
@@ -50,15 +50,28 @@
 </header>
 
 <main>
+  <!-- Cột trái: xem & thao tác -->
   <section class="col panel" style="display:flex;flex-direction:column;gap:12px;">
-    <div class="row" style="flex-wrap:wrap">
+
+    <!-- Bộ thẻ (sets) -->
+    <div class="panel">
+      <div class="row">
+        <select id="setSelect" title="Chọn bộ thẻ" style="flex:1 1 220px;"></select>
+        <button id="setAddBtn" class="btn" title="Tạo bộ thẻ mới">+ Bộ thẻ</button>
+        <button id="setRenameBtn" class="btn" title="Đổi tên bộ thẻ">Đổi tên</button>
+        <button id="setDeleteBtn" class="btn" title="Xóa bộ thẻ">Xóa bộ</button>
+      </div>
+    </div>
+
+    <!-- Ô tìm kiếm + điều hướng thẻ -->
+    <div class="row">
       <input id="search" placeholder="Tìm thẻ..." style="flex:1 1 220px;">
-      <!-- Chỉ để điều hướng và xoá -->
       <button id="prevBtn" class="btn" title="Trước (←)">←</button>
       <button id="nextBtn" class="btn" title="Sau (→)">→</button>
       <button id="deleteBtn" class="btn" title="Xóa thẻ hiện tại (Delete)">🗑</button>
     </div>
 
+    <!-- Flashcard -->
     <div id="card" class="panel" style="min-height:280px">
       <div class="badge">
         <span id="cardIpa" class="ipa"></span>
@@ -68,14 +81,16 @@
       <div id="cardContent" style="white-space:pre-line;font-size:1.6rem;line-height:1.4"></div>
     </div>
 
+    <!-- Hành động thẻ -->
     <div class="kpx">
       <button id="unknownBtn" class="btn" title="D">Chưa thuộc</button>
       <button id="flipBtn" class="btn">Lật thẻ</button>
       <button id="knownBtn" class="btn" title="A">Đã thuộc</button>
-      <span id="loading" hidden>Đang lấy IPA/ví dụ…</span>
+      <span id="loading" hidden>Đang lấy IPA…</span>
     </div>
   </section>
 
+  <!-- Cột phải: thêm từ & danh sách -->
   <aside class="col" style="display:flex;flex-direction:column;gap:12px;">
     <div class="panel">
       <h3 style="margin:6px 0 10px">Thêm từ mới</h3>
@@ -87,7 +102,7 @@
         <button id="clearBtn" class="btn">Xoá nhập</button>
       </div>
       <div style="margin-top:6px"><small>
-        Mẹo: A = Đã thuộc, D = Chưa thuộc, Space/Enter = Lật, N = Nhập nhanh, ←/→ = chuyển thẻ, Delete = Xóa thẻ
+        Phím tắt: A = Đã thuộc, D = Chưa thuộc, Space/Enter = Lật, N = Nhập nhanh, ←/→ = chuyển thẻ, Delete = Xóa thẻ
       </small></div>
     </div>
 
@@ -106,16 +121,80 @@
 <div id="syncStatus" class="work">Đang khởi tạo…</div>
 
 <script>
-/* ====== State & Storage ====== */
-const STORAGE_KEY = 'flashcards_v3_plain';
-let cards = loadInitial();
-let currentId = cards[0]?.id || null;
+/* =================== State tổng (nhiều bộ thẻ) =================== */
+const STORAGE_KEY = 'flashcards_v4_sets';
+
+let state = loadInitialState();
+/*
+  state = {
+    version: 4,
+    activeSetId: 'set_xxx',
+    sets: [
+      { id:'set_1', name:'Bộ thẻ của tôi', cards:[{id,front,back,ipa,audio,example,known,unknown,last}, ...] },
+      ...
+    ]
+  }
+*/
+function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); setDirty(); }
+function loadInitialState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){
+      const s = JSON.parse(raw);
+      if(s && Array.isArray(s.sets) && s.sets.length){
+        // đảm bảo có activeSetId hợp lệ
+        if(!s.activeSetId || !s.sets.find(x=>x.id===s.activeSetId)){
+          s.activeSetId = s.sets[0].id;
+        }
+        return { version: 4, ...s };
+      }
+    }
+  }catch(_){}
+  // Migration từ v3: nếu có cards cũ thì chuyển thành 1 bộ
+  const oldKey = 'flashcards_v3_plain';
+  let migratedCards = [];
+  try{
+    const rawOld = localStorage.getItem(oldKey);
+    if(rawOld){
+      const arr = JSON.parse(rawOld);
+      if(Array.isArray(arr)) migratedCards = arr;
+    }
+  }catch(_){}
+  const defaultSet = {
+    id: uid('set_'),
+    name: 'Bộ thẻ của tôi',
+    cards: migratedCards.length ? migratedCards : sampleCards()
+  };
+  return { version: 4, activeSetId: defaultSet.id, sets:[defaultSet] };
+}
+
+/* =================== Helpers chung =================== */
+function uid(prefix=''){ return (prefix||'') + Math.random().toString(36).slice(2) + Date.now().toString(36) }
+function sampleCards(){
+  return [
+    { id:uid('c_'), front:"hello", back:"xin chào", known:0, unknown:0, last:0, ipa:"/həˈləʊ/", audio:"", example:"Hello! Nice to meet you." },
+    { id:uid('c_'), front:"embedded", back:"nhúng (kỹ thuật)", known:0, unknown:0, last:0, ipa:"/ɪmˈbɛdɪd/", audio:"", example:"" },
+  ];
+}
+function activeSet(){ return state.sets.find(s => s.id === state.activeSetId) }
+function currentCards(){ return activeSet()?.cards || [] }
+function setCards(newCards){ const s = activeSet(); if(!s) return; s.cards = newCards; }
+function currentCardById(id){ return currentCards().find(c=>c.id===id) }
+
+/* =================== Biến UI & sync =================== */
+let currentId = currentCards()[0]?.id || null;
 let flipped = false;
-let dirty = false;           // có thay đổi local chưa đẩy
-let lastSync = 0;            // timestamp lần sync gần nhất
-let pushTimer = null;        // debounce timer
+let dirty = false;          // có thay đổi local chưa đẩy
+let lastSync = 0;
+let pushTimer = null;
 
 const el = {
+  // Sets
+  setSelect: document.getElementById('setSelect'),
+  setAddBtn: document.getElementById('setAddBtn'),
+  setRenameBtn: document.getElementById('setRenameBtn'),
+  setDeleteBtn: document.getElementById('setDeleteBtn'),
+  // Cards UI
   search: document.getElementById('search'),
   card: document.getElementById('card'),
   cardContent: document.getElementById('cardContent'),
@@ -138,24 +217,7 @@ const el = {
   sync: document.getElementById('syncStatus'),
 };
 
-function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36) }
-function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(cards)) }
-function loadInitial(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return sample();
-    const d = JSON.parse(raw);
-    return Array.isArray(d) && d.length ? d : sample();
-  }catch(_){ return sample() }
-}
-function sample(){
-  return [
-    { id:uid(), front:"hello", back:"xin chào", known:0, unknown:0, last:0, ipa:"/həˈləʊ/", audio:"", example:"Hello! Nice to meet you." },
-    { id:uid(), front:"embedded", back:"nhúng (kỹ thuật)", known:0, unknown:0, last:0, ipa:"/ɪmˈbɛdɪd/", audio:"", example:"" },
-  ];
-}
-
-/* ====== Dictionary (IPA + audio + example-if-any) ====== */
+/* =================== Dictionary (IPA + audio) =================== */
 async function fetchDictionary(term){
   const q = String(term || '').trim();
   if(!q) return { ipa:'', audio:'', example:'', pos:[] };
@@ -183,14 +245,34 @@ async function fetchDictionary(term){
   }
 }
 
-/* ====== Rendering ====== */
-function currentCard(){ return cards.find(c => c.id === currentId) }
+/* =================== Render Sets =================== */
+function renderSets(){
+  el.setSelect.innerHTML = '';
+  state.sets.forEach(s=>{
+    const opt = document.createElement('option');
+    opt.value = s.id; opt.textContent = `${s.name} (${s.cards.length})`;
+    if(s.id === state.activeSetId) opt.selected = true;
+    el.setSelect.appendChild(opt);
+  });
+}
+function switchSet(id){
+  if(!state.sets.find(s=>s.id===id)) return;
+  state.activeSetId = id;
+  const cs = currentCards();
+  currentId = cs[0]?.id || null;
+  flipped = false;
+  saveState();
+  renderSets(); renderCard(); renderList();
+  setSync('Đang ở: ' + (activeSet()?.name || ''), 'ok');
+}
+
+/* =================== Render Cards =================== */
 function buildBackHTML(back, example){
   if(example){ return `${escapeHTML(back)}\n\n${wrapSmall('Ví dụ: ' + example)}`; }
   return escapeHTML(back);
 }
 function renderCard(){
-  const c = currentCard();
+  const c = currentCards().find(x=>x.id===currentId);
   if(!c){
     el.cardContent.textContent = "Chưa có thẻ nào. Hãy thêm từ ở bên phải.";
     el.cardIpa.textContent = ''; return;
@@ -202,7 +284,7 @@ function renderCard(){
 function renderList(){
   el.list.innerHTML = '';
   const q = el.search.value.trim().toLowerCase();
-  const filtered = cards.filter(c => !q || c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q));
+  const filtered = currentCards().filter(c => !q || c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q));
   filtered.forEach(c=>{
     const div = document.createElement('div');
     div.className = 'list-item' + (c.id===currentId ? ' active' : '');
@@ -211,33 +293,36 @@ function renderList(){
     div.onclick = ()=>{ currentId = c.id; flipped = false; renderCard(); renderList(); };
     el.list.appendChild(div);
   });
-  const total = cards.length;
-  const k = cards.reduce((s,x)=>s+x.known,0);
-  const u = cards.reduce((s,x)=>s+x.unknown,0);
-  el.stats.textContent = `Tổng: ${total} • Đã thuộc: ${k} • Chưa thuộc: ${u}`;
+  const total = currentCards().length;
+  const k = currentCards().reduce((s,x)=>s+x.known,0);
+  const u = currentCards().reduce((s,x)=>s+x.unknown,0);
+  el.stats.textContent = `Bộ: ${(activeSet()?.name)||''} • Tổng: ${total} • Đã thuộc: ${k} • Chưa thuộc: ${u}`;
 }
 
-/* ====== Actions ====== */
+/* =================== Card Actions =================== */
 function indexOfCurrent(){
-  return cards.findIndex(c => c.id === currentId);
+  return currentCards().findIndex(c => c.id === currentId);
 }
 function prevCard(){
+  const cards = currentCards();
   if(!cards.length) return;
   const idx = indexOfCurrent();
   const prev = (idx > 0 ? idx - 1 : cards.length - 1);
-  currentId = cards[prev].id; flipped = false; renderCard();
+  currentId = cards[prev].id; flipped = false; renderCard(); renderList();
 }
 function nextCard(){
+  const cards = currentCards();
   if(!cards.length) return;
   const idx = indexOfCurrent();
   const next = (idx >= 0 ? (idx + 1) % cards.length : 0);
-  currentId = cards[next].id; flipped = false; renderCard();
+  currentId = cards[next].id; flipped = false; renderCard(); renderList();
 }
 function deleteCurrent(){
+  const cards = currentCards();
   const idx = indexOfCurrent();
   if(idx < 0) return;
   const removed = cards.splice(idx, 1)[0];
-  save();
+  saveState();
   if(cards.length){
     const next = idx < cards.length ? idx : cards.length - 1;
     currentId = cards[next].id;
@@ -246,48 +331,47 @@ function deleteCurrent(){
   }
   flipped = false;
   renderCard(); renderList();
-  setDirty();
   console.debug('Deleted card:', removed?.front);
 }
 function mark(isKnown){
-  const c = currentCard(); if(!c) return;
+  const c = currentCards().find(x=>x.id===currentId); if(!c) return;
   if(isKnown) c.known++; else c.unknown++; c.last = Date.now();
-  save(); setDirty(); nextCard(); renderList();
+  saveState(); nextCard();
 }
-async function enrichCardById(id, front, back){
+async function enrichCardById(id, front){
   el.loading.hidden = false;
   const d = await fetchDictionary(front);
-  const idx = cards.findIndex(c => c.id === id);
-  if(idx >= 0){
-    const old = cards[idx];
-    cards[idx] = { ...old, ipa: d.ipa || old.ipa, audio: d.audio || old.audio, example: d.example || '' };
-    save(); if(currentId === id) renderCard(); renderList();
+  const c = currentCards().find(x=>x.id===id);
+  if(c){
+    c.ipa = d.ipa || c.ipa;
+    c.audio = d.audio || c.audio;
+    c.example = d.example || c.example || '';
+    saveState();
+    if(currentId === id) renderCard();
+    renderList();
   }
   el.loading.hidden = true;
 }
 
-/* ====== Utils ====== */
+/* =================== Utils =================== */
 function escapeHTML(s){
   return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
 function hhmmss(d=new Date()){ return d.toTimeString().slice(0,8) }
 
-/* ====== Cloud Sync config (Google Sheets Apps Script via JSONP) ====== */
+/* =================== Cloud Sync (JSONP) =================== */
 /* NHỚ cập nhật cho trùng Apps Script của bạn */
 const API_URL   = 'https://script.google.com/macros/s/AKfycbzhUxmJNJCGoHjgQM8Q7BJHLnjAp00pKMTbnhPsDOY17wMGG_TFEgwCfhuWusfIqBD-yA/exec';
 const API_TOKEN = 'abcdefgh';
 
-/* ====== JSONP helpers (tránh CORS) ====== */
 function jsonp(url, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
     const finalUrl = url + (url.includes('?') ? '&' : '?') + 'callback=' + cbName;
-
     const script = document.createElement('script');
     let done = false;
     const timer = setTimeout(() => { if (done) return; done = true; cleanup(); reject(new Error('JSONP timeout')); }, timeoutMs);
-
     function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
     window[cbName] = (data)=>{ if(done) return; done = true; cleanup(); resolve(data); };
     script.onerror = ()=>{ if(done) return; done = true; cleanup(); reject(new Error('JSONP load error')); };
@@ -301,7 +385,6 @@ function b64webSafeFromJSON(obj){
   return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
 
-/* ====== Đồng bộ: UI trạng thái & debounce ====== */
 function setSync(text, cls='work'){
   el.sync.className = cls ? cls.replace(/^/,'') : '';
   el.sync.classList.add(cls);
@@ -318,25 +401,36 @@ function schedulePush(delay=1500){
   pushTimer = setTimeout(()=> cloudPush(true).catch(()=>{}), delay);
 }
 
-/* ====== Cloud Sync actions (JSONP) ====== */
 async function cloudPull(silent=true){
   try{
     if(!silent) setSync('Đang tải từ cloud…','work');
     const url = `${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`;
     const j = await jsonp(url);
-    if(j.ok && Array.isArray(j.data)){
-      if(!dirty){
-        cards = j.data.map(r => ({
-          id: r.id, front: r.front, back: r.back,
-          known: Number(r.known)||0, unknown: Number(r.unknown)||0, last: Number(r.last)||0,
-          ipa: r.ipa||'', audio: r.audio||'', example: r.example||''
-        }));
-        currentId = cards[0]?.id || null;
-        save(); flipped=false; renderCard(); renderList();
-        lastSync = Date.now();
-        setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
-      } else if(!silent){
-        setSync('Bỏ qua pull vì có thay đổi local đang chờ đẩy', 'work');
+    if(j.ok){
+      // Hỗ trợ 2 kiểu: {state} mới hoặc {data:[cards]} cũ
+      if(j.state && Array.isArray(j.state.sets)){
+        if(!dirty){
+          state = { version:4, ...j.state };
+          // đảm bảo active set hợp lệ
+          if(!state.activeSetId || !state.sets.find(x=>x.id===state.activeSetId)){
+            state.activeSetId = state.sets[0]?.id;
+          }
+          currentId = currentCards()[0]?.id || null;
+          saveState(); flipped=false; renderSets(); renderCard(); renderList();
+          lastSync = Date.now();
+          setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
+        }
+      } else if(Array.isArray(j.data)) {
+        // Dữ liệu cũ → gán vào bộ hiện tại
+        if(!dirty){
+          const s = activeSet(); if(s){ s.cards = j.data; }
+          currentId = currentCards()[0]?.id || null;
+          saveState(); flipped=false; renderSets(); renderCard(); renderList();
+          lastSync = Date.now();
+          setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
+        }
+      } else {
+        setSync('Cloud pull: dữ liệu không hợp lệ', 'err');
       }
       return true;
     } else {
@@ -348,7 +442,8 @@ async function cloudPull(silent=true){
 
 async function cloudPush(silent=false){
   try{
-    const payload = { cards };
+    // Gửi cả state (mới) và cards (tương thích cũ)
+    const payload = { state, cards: currentCards() };
     const dataB64 = b64webSafeFromJSON(payload);
     if (dataB64.length > 6000) { setSync('Bộ thẻ quá lớn để đẩy qua JSONP (dùng backup JSON riêng)', 'err'); throw new Error('payload-too-large'); }
     if(!silent) setSync('Đang đẩy lên cloud…','work');
@@ -370,7 +465,37 @@ async function cloudPush(silent=false){
   }
 }
 
-/* ====== Events ====== */
+/* =================== Events =================== */
+// Sets
+el.setSelect.onchange = ()=> switchSet(el.setSelect.value);
+el.setAddBtn.onclick = ()=>{
+  const name = prompt('Tên bộ thẻ mới:', 'Bộ thẻ mới');
+  if(!name) return;
+  const s = { id: uid('set_'), name: name.trim(), cards: [] };
+  state.sets.unshift(s);
+  state.activeSetId = s.id;
+  currentId = null;
+  saveState();
+  renderSets(); renderCard(); renderList();
+};
+el.setRenameBtn.onclick = ()=>{
+  const s = activeSet(); if(!s) return;
+  const name = prompt('Đổi tên bộ thẻ:', s.name);
+  if(!name) return;
+  s.name = name.trim();
+  saveState(); renderSets(); renderList();
+};
+el.setDeleteBtn.onclick = ()=>{
+  if(state.sets.length <= 1){ alert('Cần ít nhất 1 bộ thẻ. Không thể xoá.'); return; }
+  const s = activeSet(); if(!s) return;
+  if(!confirm(`Xoá bộ "${s.name}"?`)) return;
+  state.sets = state.sets.filter(x => x.id !== s.id);
+  state.activeSetId = state.sets[0].id;
+  currentId = currentCards()[0]?.id || null;
+  saveState(); renderSets(); renderCard(); renderList();
+};
+
+// Cards
 el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
 el.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
 el.knownBtn.onclick = ()=> mark(true);
@@ -384,17 +509,18 @@ el.addBtn.onclick = ()=>{
   const f = el.inFront.value.trim();
   const b = el.inBack.value.trim();
   if(!f || !b) return;
-  const card = { id:uid(), front:f, back:b, known:0, unknown:0, last:0, ipa:'', audio:'', example:'' };
-  cards.unshift(card); save(); currentId = card.id; flipped = false;
-  renderCard(); renderList(); enrichCardById(card.id, f, b);
+  const card = { id:uid('c_'), front:f, back:b, known:0, unknown:0, last:0, ipa:'', audio:'', example:'' };
+  currentCards().unshift(card);
+  saveState();
+  currentId = card.id; flipped = false;
+  renderCard(); renderList(); enrichCardById(card.id, f);
   el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML='';
-  setDirty(); // auto push
 };
 el.clearBtn.onclick = ()=>{ el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML=''; el.inFront.focus(); };
 el.inFront.onblur = previewEnrichFront;
 el.speakBtn.onclick = (e)=>{
   e.stopPropagation();
-  const c = currentCard(); if(!c) return;
+  const c = currentCards().find(x=>x.id===currentId); if(!c) return;
   if(c.audio){ new Audio(c.audio).play(); }
   else{
     try{ const u = new SpeechSynthesisUtterance(c.front); u.lang='en-US'; u.rate=1; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(_){}
@@ -424,27 +550,21 @@ async function previewEnrichFront(){
   el.loading.hidden = true;
 }
 
-/* ====== Auto behaviors ======
-   - Pull khi tải trang
-   - Mỗi 10s: nếu bẩn (dirty) thì push; nếu sạch thì pull
-   - Nếu dirty bị kẹt > 30s → force pull để tránh kẹt
-*/
+/* =================== Khởi động + Auto Sync =================== */
+function renderAll(){ renderSets(); renderCard(); renderList(); }
+
 (async function init(){
-  renderCard(); renderList();
+  renderAll();
   setSync('Đang tải dữ liệu…','work');
   await cloudPull(true).catch(()=>{});
   setSync('Sẵn sàng', 'ok');
 
   let dirtySince = 0;
-
   function autoSyncTick(){
-    console.debug('[autoSyncTick]', { dirty, lastSync, at: new Date().toISOString() });
-
     if (dirty) {
       if (!dirtySince) dirtySince = Date.now();
       cloudPush(true).catch(()=>{});
       if (Date.now() - dirtySince > 30_000) {
-        console.warn('[autoSyncTick] dirty > 30s → force pull');
         cloudPull(true).catch(()=>{});
         dirtySince = Date.now();
       }
@@ -453,7 +573,6 @@ async function previewEnrichFront(){
       cloudPull(true).catch(()=>{});
     }
   }
-
   setInterval(autoSyncTick, 10_000); // 10 giây/lần
 })();
 </script>
