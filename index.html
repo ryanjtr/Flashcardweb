@@ -274,6 +274,7 @@ function importJSON(file){
 }
 
 /* ====== Cloud Sync config (Google Sheets Apps Script) ====== */
+/* NHỚ sửa cho trùng Apps Script */
 const API_URL   = 'https://script.google.com/macros/s/AKfycbzhUxmJNJCGoHjgQM8Q7BJHLnjAp00pKMTbnhPsDOY17wMGG_TFEgwCfhuWusfIqBD-yA/exec';
 const API_TOKEN = 'abcdefgh';
 
@@ -314,18 +315,16 @@ function setDirty(){
 }
 function schedulePush(delay=1500){
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(()=> cloudPush(true), delay);
+  pushTimer = setTimeout(()=> cloudPush(true).catch(()=>{}), delay);
 }
 
 /* ====== Cloud Sync actions (JSONP) ====== */
-// Pull toàn bộ từ cloud
 async function cloudPull(silent=true){
   try{
     if(!silent) setSync('Đang tải từ cloud…','work');
     const url = `${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`;
     const j = await jsonp(url);
     if(j.ok && Array.isArray(j.data)){
-      // chỉ pull khi chưa có thay đổi local đang chờ đẩy
       if(!dirty){
         cards = j.data.map(r => ({
           id: r.id, front: r.front, back: r.back,
@@ -339,18 +338,19 @@ async function cloudPull(silent=true){
       } else if(!silent){
         setSync('Bỏ qua pull vì có thay đổi local đang chờ đẩy', 'work');
       }
+      return true;
     } else {
       setSync('Cloud pull thất bại', 'err');
+      throw new Error('pull-failed');
     }
-  }catch(e){ console.error(e); setSync('Cloud pull lỗi mạng', 'err'); }
+  }catch(e){ console.error(e); setSync('Cloud pull lỗi mạng', 'err'); throw e; }
 }
 
-// Push toàn bộ cards (giới hạn kích thước URL)
 async function cloudPush(silent=false){
   try{
     const payload = { cards };
     const dataB64 = b64webSafeFromJSON(payload);
-    if (dataB64.length > 6000) { setSync('Bộ thẻ quá lớn để đẩy qua JSONP (dùng Xuất/Import)', 'err'); return; }
+    if (dataB64.length > 6000) { setSync('Bộ thẻ quá lớn để đẩy qua JSONP (dùng Xuất/Import)', 'err'); throw new Error('payload-too-large'); }
     if(!silent) setSync('Đang đẩy lên cloud…','work');
     const url = `${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${dataB64}`;
     const j = await jsonp(url, 20000);
@@ -358,10 +358,16 @@ async function cloudPush(silent=false){
       dirty = false;
       lastSync = Date.now();
       setSync('Đã đồng bộ (push) ' + hhmmss(new Date(lastSync)), 'ok');
+      return true;
     } else {
       setSync('Cloud push thất bại', 'err');
+      throw new Error('push-failed');
     }
-  }catch(e){ console.error(e); setSync('Cloud push lỗi mạng', 'err'); }
+  }catch(e){
+    console.error(e);
+    setSync('Cloud push lỗi mạng', 'err');
+    throw e;
+  }
 }
 
 /* ====== Events ====== */
@@ -393,8 +399,8 @@ el.speakBtn.onclick = (e)=>{
 };
 el.exportBtn.onclick = exportJSON;
 el.importFile.onchange = (e)=>{ const f=e.target.files?.[0]; if(f) importJSON(f); };
-el.cloudPullBtn.onclick = ()=>cloudPull(false);
-el.cloudPushBtn.onclick = ()=>cloudPush(false);
+el.cloudPullBtn.onclick = ()=>cloudPull(false).catch(()=>{});
+el.cloudPushBtn.onclick = ()=>cloudPush(false).catch(()=>{});
 
 window.addEventListener('keydown', (e)=>{
   const tag = e.target && e.target.tagName;
@@ -418,14 +424,35 @@ async function previewEnrichFront(){
 
 /* ====== Auto behaviors ======
    - Pull khi tải trang
-   - Mỗi 10 phút thử pull nếu không có thay đổi local
+   - Mỗi 10s: nếu bẩn (dirty) thì push; nếu sạch thì pull
+   - Nếu dirty bị kẹt > 30s → force pull để tránh kẹt
 */
 (async function init(){
   renderCard(); renderList();
   setSync('Đang tải dữ liệu…','work');
-  await cloudPull(true);               // auto pull khi mở
+  await cloudPull(true).catch(()=>{});
   setSync('Sẵn sàng', 'ok');
-  setInterval(()=> cloudPull(true), 10000); // 10 phút/lần nếu rảnh
+
+  let dirtySince = 0;
+
+  function autoSyncTick(){
+    console.debug('[autoSyncTick]', { dirty, lastSync, at: new Date().toISOString() });
+
+    if (dirty) {
+      if (!dirtySince) dirtySince = Date.now();
+      cloudPush(true).catch(()=>{});
+      if (Date.now() - dirtySince > 30_000) {
+        console.warn('[autoSyncTick] dirty > 30s → force pull');
+        cloudPull(true).catch(()=>{});
+        dirtySince = Date.now();
+      }
+    } else {
+      dirtySince = 0;
+      cloudPull(true).catch(()=>{});
+    }
+  }
+
+  setInterval(autoSyncTick, 10_000); // 10 giây/lần
 })();
 </script>
 </body>
