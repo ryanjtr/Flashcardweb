@@ -30,7 +30,7 @@
   .list-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:10px;background:var(--panel);border:1px solid var(--border);cursor:pointer;margin-bottom:6px}
   .list-item.active{background:var(--accent)}
   small{color:var(--muted)}
-  .kpx{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .kpx{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
   /* Badge trạng thái sync */
   #syncStatus{
     position:fixed; right:12px; bottom:12px; padding:8px 12px; border-radius:10px;
@@ -53,12 +53,10 @@
   <section class="col panel" style="display:flex;flex-direction:column;gap:12px;">
     <div class="row" style="flex-wrap:wrap">
       <input id="search" placeholder="Tìm thẻ..." style="flex:1 1 220px;">
-      <button id="exportBtn" class="btn" title="Xuất JSON">Xuất</button>
-      <label class="btn" title="Nhập JSON" style="cursor:pointer">
-        Nhập <input id="importFile" type="file" accept=".json,application/json" hidden>
-      </label>
-      <button id="cloudPullBtn" class="btn" title="Tải từ cloud (Google Sheets)">Cloud Pull</button>
-      <button id="cloudPushBtn" class="btn" title="Đẩy lên cloud (Google Sheets)">Cloud Push</button>
+      <!-- Chỉ để điều hướng và xoá -->
+      <button id="prevBtn" class="btn" title="Trước (←)">←</button>
+      <button id="nextBtn" class="btn" title="Sau (→)">→</button>
+      <button id="deleteBtn" class="btn" title="Xóa thẻ hiện tại (Delete)">🗑</button>
     </div>
 
     <div id="card" class="panel" style="min-height:280px">
@@ -70,7 +68,7 @@
       <div id="cardContent" style="white-space:pre-line;font-size:1.6rem;line-height:1.4"></div>
     </div>
 
-    <div class="kpx" style="justify-content:center">
+    <div class="kpx">
       <button id="unknownBtn" class="btn" title="D">Chưa thuộc</button>
       <button id="flipBtn" class="btn">Lật thẻ</button>
       <button id="knownBtn" class="btn" title="A">Đã thuộc</button>
@@ -88,7 +86,9 @@
         <button id="addBtn" class="btn" style="flex:1" title="N">Thêm từ</button>
         <button id="clearBtn" class="btn">Xoá nhập</button>
       </div>
-      <div style="margin-top:6px"><small>Mẹo: A = Đã thuộc, D = Chưa thuộc, Space/Enter = Lật, N = Nhập nhanh</small></div>
+      <div style="margin-top:6px"><small>
+        Mẹo: A = Đã thuộc, D = Chưa thuộc, Space/Enter = Lật, N = Nhập nhanh, ←/→ = chuyển thẻ, Delete = Xóa thẻ
+      </small></div>
     </div>
 
     <div class="panel">
@@ -117,14 +117,15 @@ let pushTimer = null;        // debounce timer
 
 const el = {
   search: document.getElementById('search'),
-  exportBtn: document.getElementById('exportBtn'),
-  importFile: document.getElementById('importFile'),
   card: document.getElementById('card'),
   cardContent: document.getElementById('cardContent'),
   cardIpa: document.getElementById('cardIpa'),
   speakBtn: document.getElementById('speakBtn'),
   knownBtn: document.getElementById('knownBtn'),
   unknownBtn: document.getElementById('unknownBtn'),
+  prevBtn: document.getElementById('prevBtn'),
+  nextBtn: document.getElementById('nextBtn'),
+  deleteBtn: document.getElementById('deleteBtn'),
   flipBtn: document.getElementById('flipBtn'),
   inFront: document.getElementById('inFront'),
   inBack: document.getElementById('inBack'),
@@ -134,8 +135,6 @@ const el = {
   list: document.getElementById('list'),
   stats: document.getElementById('stats'),
   loading: document.getElementById('loading'),
-  cloudPullBtn: document.getElementById('cloudPullBtn'),
-  cloudPushBtn: document.getElementById('cloudPushBtn'),
   sync: document.getElementById('syncStatus'),
 };
 
@@ -219,11 +218,36 @@ function renderList(){
 }
 
 /* ====== Actions ====== */
+function indexOfCurrent(){
+  return cards.findIndex(c => c.id === currentId);
+}
+function prevCard(){
+  if(!cards.length) return;
+  const idx = indexOfCurrent();
+  const prev = (idx > 0 ? idx - 1 : cards.length - 1);
+  currentId = cards[prev].id; flipped = false; renderCard();
+}
 function nextCard(){
   if(!cards.length) return;
-  const idx = cards.findIndex(c => c.id === currentId);
-  const next = (idx >= 0 ? (idx+1) % cards.length : 0);
+  const idx = indexOfCurrent();
+  const next = (idx >= 0 ? (idx + 1) % cards.length : 0);
   currentId = cards[next].id; flipped = false; renderCard();
+}
+function deleteCurrent(){
+  const idx = indexOfCurrent();
+  if(idx < 0) return;
+  const removed = cards.splice(idx, 1)[0];
+  save();
+  if(cards.length){
+    const next = idx < cards.length ? idx : cards.length - 1;
+    currentId = cards[next].id;
+  } else {
+    currentId = null;
+  }
+  flipped = false;
+  renderCard(); renderList();
+  setDirty();
+  console.debug('Deleted card:', removed?.front);
 }
 function mark(isKnown){
   const c = currentCard(); if(!c) return;
@@ -249,32 +273,8 @@ function escapeHTML(s){
 function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
 function hhmmss(d=new Date()){ return d.toTimeString().slice(0,8) }
 
-/* ====== Import/Export ====== */
-function exportJSON(){
-  const blob = new Blob([JSON.stringify(cards, null, 2)], {type:'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = 'flashcards.json'; a.click();
-  URL.revokeObjectURL(url);
-}
-function importJSON(file){
-  const reader = new FileReader();
-  reader.onload = (e)=>{
-    try{
-      const data = JSON.parse(String(e.target?.result || '[]'));
-      if(!Array.isArray(data)) return;
-      const norm = data.filter(x => x && (x.front||x.term||x.q) && (x.back||x.def||x.a)).map(x => ({
-        id: uid(), front: x.front ?? x.term ?? x.q, back: x.back ?? x.def ?? x.a,
-        known: Number(x.known)||0, unknown: Number(x.unknown)||0, last: Number(x.last)||0,
-        ipa: x.ipa || '', audio: x.audio || '', example: x.example || ''
-      }));
-      if(norm.length){ cards = norm; currentId = cards[0].id; flipped = false; save(); renderCard(); renderList(); setDirty(); }
-    }catch(err){ console.error(err); }
-  };
-  reader.readAsText(file);
-}
-
-/* ====== Cloud Sync config (Google Sheets Apps Script) ====== */
-/* NHỚ sửa cho trùng Apps Script */
+/* ====== Cloud Sync config (Google Sheets Apps Script via JSONP) ====== */
+/* NHỚ cập nhật cho trùng Apps Script của bạn */
 const API_URL   = 'https://script.google.com/macros/s/AKfycbzhUxmJNJCGoHjgQM8Q7BJHLnjAp00pKMTbnhPsDOY17wMGG_TFEgwCfhuWusfIqBD-yA/exec';
 const API_TOKEN = 'abcdefgh';
 
@@ -350,7 +350,7 @@ async function cloudPush(silent=false){
   try{
     const payload = { cards };
     const dataB64 = b64webSafeFromJSON(payload);
-    if (dataB64.length > 6000) { setSync('Bộ thẻ quá lớn để đẩy qua JSONP (dùng Xuất/Import)', 'err'); throw new Error('payload-too-large'); }
+    if (dataB64.length > 6000) { setSync('Bộ thẻ quá lớn để đẩy qua JSONP (dùng backup JSON riêng)', 'err'); throw new Error('payload-too-large'); }
     if(!silent) setSync('Đang đẩy lên cloud…','work');
     const url = `${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${dataB64}`;
     const j = await jsonp(url, 20000);
@@ -375,6 +375,9 @@ el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
 el.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
 el.knownBtn.onclick = ()=> mark(true);
 el.unknownBtn.onclick = ()=> mark(false);
+el.prevBtn.onclick = prevCard;
+el.nextBtn.onclick = nextCard;
+el.deleteBtn.onclick = deleteCurrent;
 el.search.oninput = renderList;
 
 el.addBtn.onclick = ()=>{
@@ -397,10 +400,6 @@ el.speakBtn.onclick = (e)=>{
     try{ const u = new SpeechSynthesisUtterance(c.front); u.lang='en-US'; u.rate=1; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(_){}
   }
 };
-el.exportBtn.onclick = exportJSON;
-el.importFile.onchange = (e)=>{ const f=e.target.files?.[0]; if(f) importJSON(f); };
-el.cloudPullBtn.onclick = ()=>cloudPull(false).catch(()=>{});
-el.cloudPushBtn.onclick = ()=>cloudPush(false).catch(()=>{});
 
 window.addEventListener('keydown', (e)=>{
   const tag = e.target && e.target.tagName;
@@ -409,6 +408,9 @@ window.addEventListener('keydown', (e)=>{
   if(k === ' ' || k === 'enter'){ e.preventDefault(); flipped=!flipped; renderCard(); }
   else if(k === 'a'){ mark(true); }
   else if(k === 'd'){ mark(false); }
+  else if(k === 'arrowleft'){ e.preventDefault(); prevCard(); }
+  else if(k === 'arrowright'){ e.preventDefault(); nextCard(); }
+  else if(k === 'delete'){ e.preventDefault(); deleteCurrent(); }
   else if(k === 'n'){ el.inFront.focus(); }
 });
 
