@@ -328,18 +328,26 @@ async function cloudPull(){
 
 // Đẩy toàn bộ cards hiện tại lên cloud (ghi đè sheet)
 async function cloudPush(){
-  if(!API_URL || API_URL.includes('PASTE_YOUR')) { alert('Bạn chưa điền API_URL ở phần Cloud Sync config.'); return; }
+  if(!API_URL || API_URL.includes('PASTE_YOUR')) { 
+    alert('Bạn chưa điền API_URL ở phần Cloud Sync config.'); 
+    return; 
+  }
   try{
     const res = await fetch(API_URL, {
       method:'POST',
-      headers:{ 'Content-Type':'application/json' },
+      // Dùng text/plain để tránh preflight CORS
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
       body: JSON.stringify({ op:'saveAll', token:API_TOKEN, cards })
     });
     const j = await res.json();
     if(j.ok) alert('Đã đẩy dữ liệu lên cloud.');
     else alert('Cloud push thất bại.');
-  }catch(e){ console.error(e); alert('Cloud push lỗi mạng.'); }
+  }catch(e){
+    console.error(e);
+    alert('Cloud push lỗi mạng.');
+  }
 }
+
 
 /* ====== Events ====== */
 el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
