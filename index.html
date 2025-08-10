@@ -44,12 +44,15 @@
 <main>
   <!-- Cột trái: xem & thao tác -->
   <section class="col panel" style="display:flex;flex-direction:column;gap:12px;">
-    <div class="row">
-      <input id="search" placeholder="Tìm thẻ...">
+    <div class="row" style="flex-wrap:wrap">
+      <input id="search" placeholder="Tìm thẻ..." style="flex:1 1 220px;">
       <button id="exportBtn" class="btn" title="Xuất JSON">Xuất</button>
       <label class="btn" title="Nhập JSON" style="cursor:pointer">
         Nhập <input id="importFile" type="file" accept=".json,application/json" hidden>
       </label>
+      <!-- ✅ Thêm nút Cloud -->
+      <button id="cloudPullBtn" class="btn" title="Tải từ cloud (Google Sheets)">Cloud ⭳</button>
+      <button id="cloudPushBtn" class="btn" title="Đẩy lên cloud (Google Sheets)">Cloud ⭱</button>
     </div>
 
     <div id="card" class="panel" style="min-height:280px">
@@ -119,7 +122,9 @@ const el = {
   clearBtn: document.getElementById('clearBtn'),
   list: document.getElementById('list'),
   stats: document.getElementById('stats'),
-  loading: document.getElementById('loading')
+  loading: document.getElementById('loading'),
+  cloudPullBtn: document.getElementById('cloudPullBtn'),
+  cloudPushBtn: document.getElementById('cloudPushBtn'),
 };
 
 function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36) }
@@ -293,6 +298,49 @@ function importJSON(file){
   reader.readAsText(file);
 }
 
+/* ====== Cloud Sync config (Google Sheets Apps Script) ====== */
+/* TODO: điền 2 thông tin này sau khi bạn deploy Apps Script Web App */
+const API_URL   = 'https://script.google.com/macros/s/AKfycbzMk0cWK8KTULiazvsQkqRjG8LpqTp9nooAJRx9_9W3fCH-hdYZAp2KKbyMND4J34yj3A/exec';   // vd: https://script.google.com/macros/s/AKfycb.../exec
+const API_TOKEN = 'abcdefgh';
+
+/* ====== Cloud Sync actions ====== */
+// Tải toàn bộ từ cloud → ghi đè cards
+async function cloudPull(){
+  if(!API_URL || API_URL.includes('PASTE_YOUR')) { alert('Bạn chưa điền API_URL ở phần Cloud Sync config.'); return; }
+  try{
+    const url = `${API_URL}?token=${encodeURIComponent(API_TOKEN)}`;
+    const res = await fetch(url, { method:'GET' });
+    const j = await res.json();
+    if(j.ok && Array.isArray(j.data)){
+      cards = j.data.map(r => ({
+        id: r.id, front: r.front, back: r.back,
+        known: Number(r.known)||0, unknown: Number(r.unknown)||0, last: Number(r.last)||0,
+        ipa: r.ipa||'', audio: r.audio||'', example: r.example||''
+      }));
+      currentId = cards[0]?.id || null;
+      save(); flipped=false; renderCard(); renderList();
+      alert('Đã tải dữ liệu từ cloud.');
+    } else {
+      alert('Cloud pull thất bại.');
+    }
+  }catch(e){ console.error(e); alert('Cloud pull lỗi mạng.'); }
+}
+
+// Đẩy toàn bộ cards hiện tại lên cloud (ghi đè sheet)
+async function cloudPush(){
+  if(!API_URL || API_URL.includes('PASTE_YOUR')) { alert('Bạn chưa điền API_URL ở phần Cloud Sync config.'); return; }
+  try{
+    const res = await fetch(API_URL, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ op:'saveAll', token:API_TOKEN, cards })
+    });
+    const j = await res.json();
+    if(j.ok) alert('Đã đẩy dữ liệu lên cloud.');
+    else alert('Cloud push thất bại.');
+  }catch(e){ console.error(e); alert('Cloud push lỗi mạng.'); }
+}
+
 /* ====== Events ====== */
 el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
 el.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
@@ -328,6 +376,8 @@ el.speakBtn.onclick = (e)=>{
 };
 el.exportBtn.onclick = exportJSON;
 el.importFile.onchange = (e)=>{ const f=e.target.files?.[0]; if(f) importJSON(f); };
+el.cloudPullBtn.onclick = cloudPull;
+el.cloudPushBtn.onclick = cloudPush;
 
 window.addEventListener('keydown', (e)=>{
   const tag = e.target && e.target.tagName;
