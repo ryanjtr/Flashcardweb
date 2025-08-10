@@ -42,7 +42,6 @@
 </header>
 
 <main>
-  <!-- Cột trái: xem & thao tác -->
   <section class="col panel" style="display:flex;flex-direction:column;gap:12px;">
     <div class="row" style="flex-wrap:wrap">
       <input id="search" placeholder="Tìm thẻ..." style="flex:1 1 220px;">
@@ -50,7 +49,6 @@
       <label class="btn" title="Nhập JSON" style="cursor:pointer">
         Nhập <input id="importFile" type="file" accept=".json,application/json" hidden>
       </label>
-      <!-- ✅ Thêm nút Cloud -->
       <button id="cloudPullBtn" class="btn" title="Tải từ cloud (Google Sheets)">Cloud ⭳</button>
       <button id="cloudPushBtn" class="btn" title="Đẩy lên cloud (Google Sheets)">Cloud ⭱</button>
     </div>
@@ -72,7 +70,6 @@
     </div>
   </section>
 
-  <!-- Cột phải: thêm & danh sách -->
   <aside class="col" style="display:flex;flex-direction:column;gap:12px;">
     <div class="panel">
       <h3 style="margin:6px 0 10px">Thêm từ mới</h3>
@@ -103,8 +100,6 @@ const STORAGE_KEY = 'flashcards_v3_plain';
 let cards = loadInitial();
 let currentId = cards[0]?.id || null;
 let flipped = false;
-const APP_BUILD = '11:16'; 
-console.log('Build:', APP_BUILD);
 
 const el = {
   search: document.getElementById('search'),
@@ -166,7 +161,7 @@ async function fetchDictionary(term){
     if(entry?.meanings?.length){
       pos = entry.meanings.map(m=>m.partOfSpeech).filter(Boolean);
       const defWithEx = entry.meanings.flatMap(m => m.definitions || []).find(d => d.example);
-      if(defWithEx?.example) example = defWithEx.example; // chỉ dùng ví dụ từ API
+      if(defWithEx?.example) example = defWithEx.example;
     }
     return { ipa, audio, example, pos };
   }catch(e){
@@ -176,30 +171,20 @@ async function fetchDictionary(term){
 
 /* ====== Rendering ====== */
 function currentCard(){ return cards.find(c => c.id === currentId) }
-
 function buildBackHTML(back, example){
-  // Trả về HTML cho mặt sau; chỉ hiện "Ví dụ" khi có
-  if(example){
-    return `${escapeHTML(back)}\n\n${wrapSmall('Ví dụ: ' + example)}`;
-  }
+  if(example){ return `${escapeHTML(back)}\n\n${wrapSmall('Ví dụ: ' + example)}`; }
   return escapeHTML(back);
 }
-
 function renderCard(){
   const c = currentCard();
   if(!c){
     el.cardContent.textContent = "Chưa có thẻ nào. Hãy thêm từ ở bên phải.";
-    el.cardIpa.textContent = '';
-    return;
+    el.cardIpa.textContent = ''; return;
   }
   el.cardIpa.textContent = c.ipa || '';
-  if(flipped){
-    el.cardContent.innerHTML = buildBackHTML(c.back, c.example);
-  }else{
-    el.cardContent.textContent = c.front;
-  }
+  el.cardContent[flipped ? 'innerHTML' : 'textContent'] =
+    flipped ? buildBackHTML(c.back, c.example) : c.front;
 }
-
 function renderList(){
   el.list.innerHTML = '';
   const q = el.search.value.trim().toLowerCase();
@@ -223,35 +208,21 @@ function nextCard(){
   if(!cards.length) return;
   const idx = cards.findIndex(c => c.id === currentId);
   const next = (idx >= 0 ? (idx+1) % cards.length : 0);
-  currentId = cards[next].id;
-  flipped = false;
-  renderCard();
+  currentId = cards[next].id; flipped = false; renderCard();
 }
-
 function mark(isKnown){
   const c = currentCard(); if(!c) return;
-  if(isKnown) c.known++; else c.unknown++;
-  c.last = Date.now();
-  save();
-  nextCard();
-  renderList();
+  if(isKnown) c.known++; else c.unknown++; c.last = Date.now();
+  save(); nextCard(); renderList();
 }
-
 async function enrichCardById(id, front, back){
   el.loading.hidden = false;
   const d = await fetchDictionary(front);
   const idx = cards.findIndex(c => c.id === id);
   if(idx >= 0){
     const old = cards[idx];
-    cards[idx] = {
-      ...old,
-      ipa: d.ipa || old.ipa,
-      audio: d.audio || old.audio,
-      example: d.example || ''   // chỉ dùng ví dụ từ API; có thì hiển thị, không có thì để trống
-    };
-    save();
-    if(currentId === id) renderCard();
-    renderList();
+    cards[idx] = { ...old, ipa: d.ipa || old.ipa, audio: d.audio || old.audio, example: d.example || '' };
+    save(); if(currentId === id) renderCard(); renderList();
   }
   el.loading.hidden = true;
 }
@@ -266,8 +237,7 @@ function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
 function exportJSON(){
   const blob = new Blob([JSON.stringify(cards, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'flashcards.json'; a.click();
+  const a = document.createElement('a'); a.href = url; a.download = 'flashcards.json'; a.click();
   URL.revokeObjectURL(url);
 }
 function importJSON(file){
@@ -276,43 +246,51 @@ function importJSON(file){
     try{
       const data = JSON.parse(String(e.target?.result || '[]'));
       if(!Array.isArray(data)) return;
-      const norm = data
-        .filter(x => x && (x.front||x.term||x.q) && (x.back||x.def||x.a))
-        .map(x => ({
-          id: uid(),
-          front: x.front ?? x.term ?? x.q,
-          back:  x.back  ?? x.def  ?? x.a,
-          known: Number(x.known)||0,
-          unknown: Number(x.unknown)||0,
-          last: Number(x.last)||0,
-          ipa: x.ipa || '',
-          audio: x.audio || '',
-          example: x.example || ''
-        }));
-      if(norm.length){
-        cards = norm;
-        currentId = cards[0].id;
-        flipped = false;
-        save(); renderCard(); renderList();
-      }
+      const norm = data.filter(x => x && (x.front||x.term||x.q) && (x.back||x.def||x.a)).map(x => ({
+        id: uid(), front: x.front ?? x.term ?? x.q, back: x.back ?? x.def ?? x.a,
+        known: Number(x.known)||0, unknown: Number(x.unknown)||0, last: Number(x.last)||0,
+        ipa: x.ipa || '', audio: x.audio || '', example: x.example || ''
+      }));
+      if(norm.length){ cards = norm; currentId = cards[0].id; flipped = false; save(); renderCard(); renderList(); }
     }catch(err){ console.error(err); }
   };
   reader.readAsText(file);
 }
 
 /* ====== Cloud Sync config (Google Sheets Apps Script) ====== */
-/* TODO: điền 2 thông tin này sau khi bạn deploy Apps Script Web App */
-const API_URL   = 'https://script.google.com/macros/s/AKfycbzMk0cWK8KTULiazvsQkqRjG8LpqTp9nooAJRx9_9W3fCH-hdYZAp2KKbyMND4J34yj3A/exec';   // vd: https://script.google.com/macros/s/AKfycb.../exec
+/* Điền URL Web App & TOKEN trùng Code.gs */
+const API_URL   = 'https://script.google.com/macros/s/AKfycbzhUxmJNJCGoHjgQM8Q7BJHLnjAp00pKMTbnhPsDOY17wMGG_TFEgwCfhuWusfIqBD-yA/exec';
 const API_TOKEN = 'abcdefgh';
 
-/* ====== Cloud Sync actions ====== */
-// Tải toàn bộ từ cloud → ghi đè cards
+/* ====== JSONP helpers (tránh CORS) ====== */
+function jsonp(url, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
+    const finalUrl = url + (url.includes('?') ? '&' : '?') + 'callback=' + cbName;
+
+    const script = document.createElement('script');
+    let done = false;
+    const timer = setTimeout(() => { if (done) return; done = true; cleanup(); reject(new Error('JSONP timeout')); }, timeoutMs);
+
+    function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+    window[cbName] = (data)=>{ if(done) return; done = true; cleanup(); resolve(data); };
+    script.onerror = ()=>{ if(done) return; done = true; cleanup(); reject(new Error('JSONP load error')); };
+    script.src = finalUrl;
+    document.head.appendChild(script);
+  });
+}
+function b64webSafeFromJSON(obj){
+  const json = JSON.stringify(obj);
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+/* ====== Cloud Sync actions (JSONP) ====== */
+// Pull toàn bộ từ cloud
 async function cloudPull(){
-  if(!API_URL || API_URL.includes('PASTE_YOUR')) { alert('Bạn chưa điền API_URL ở phần Cloud Sync config.'); return; }
   try{
-    const url = `${API_URL}?token=${encodeURIComponent(API_TOKEN)}`;
-    const res = await fetch(url, { method:'GET' });
-    const j = await res.json();
+    const url = `${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`;
+    const j = await jsonp(url);
     if(j.ok && Array.isArray(j.data)){
       cards = j.data.map(r => ({
         id: r.id, front: r.front, back: r.back,
@@ -322,34 +300,24 @@ async function cloudPull(){
       currentId = cards[0]?.id || null;
       save(); flipped=false; renderCard(); renderList();
       alert('Đã tải dữ liệu từ cloud.');
-    } else {
-      alert('Cloud pull thất bại.');
-    }
+    } else { alert('Cloud pull thất bại.'); }
   }catch(e){ console.error(e); alert('Cloud pull lỗi mạng.'); }
 }
 
-// Đẩy toàn bộ cards hiện tại lên cloud (ghi đè sheet)
+// Push toàn bộ cards (giới hạn kích thước URL)
 async function cloudPush(){
-  if(!API_URL || API_URL.includes('PASTE_YOUR')) { 
-    alert('Bạn chưa điền API_URL ở phần Cloud Sync config.'); 
-    return; 
-  }
   try{
-    const res = await fetch(API_URL, {
-      method:'POST',
-      // Dùng text/plain để tránh preflight CORS
-      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body: JSON.stringify({ op:'saveAll', token:API_TOKEN, cards })
-    });
-    const j = await res.json();
-    if(j.ok) alert('Đã đẩy dữ liệu lên cloud.');
-    else alert('Cloud push thất bại.');
-  }catch(e){
-    console.error(e);
-    alert('Cloud push lỗi mạng.');
-  }
+    const payload = { cards };
+    const dataB64 = b64webSafeFromJSON(payload);
+    if (dataB64.length > 6000) {
+      alert('Bộ thẻ quá lớn để đẩy qua JSONP. Hãy dùng "Xuất" để backup hoặc chia nhỏ.');
+      return;
+    }
+    const url = `${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${dataB64}`;
+    const j = await jsonp(url, 20000);
+    if(j.ok) alert('Đã đẩy dữ liệu lên cloud.'); else alert('Cloud push thất bại.');
+  }catch(e){ console.error(e); alert('Cloud push lỗi mạng.'); }
 }
-
 
 /* ====== Events ====== */
 el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
@@ -363,11 +331,9 @@ el.addBtn.onclick = ()=>{
   const b = el.inBack.value.trim();
   if(!f || !b) return;
   const card = { id:uid(), front:f, back:b, known:0, unknown:0, last:0, ipa:'', audio:'', example:'' };
-  cards.unshift(card);
-  save();
+  cards.unshift(card); save();
   currentId = card.id; flipped = false;
-  renderCard(); renderList();
-  enrichCardById(card.id, f, b);
+  renderCard(); renderList(); enrichCardById(card.id, f, b);
   el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML='';
 };
 el.clearBtn.onclick = ()=>{ el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML=''; el.inFront.focus(); };
@@ -377,11 +343,7 @@ el.speakBtn.onclick = (e)=>{
   const c = currentCard(); if(!c) return;
   if(c.audio){ new Audio(c.audio).play(); }
   else{
-    try{
-      const u = new SpeechSynthesisUtterance(c.front);
-      u.lang = 'en-US'; u.rate = 1;
-      speechSynthesis.cancel(); speechSynthesis.speak(u);
-    }catch(_){}
+    try{ const u = new SpeechSynthesisUtterance(c.front); u.lang='en-US'; u.rate=1; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(_){}
   }
 };
 el.exportBtn.onclick = exportJSON;
@@ -409,14 +371,10 @@ async function previewEnrichFront(){
   el.loading.hidden = true;
 }
 
-/* ====== Minimal Console Tests (không cần mạng) ======
-   - Đảm bảo buildBackHTML không chèn "Ví dụ" khi example rỗng
-   - Đảm bảo escapeHTML hoạt động
-*/
-(function selfTests(){
+/* ====== Self tests ====== */
+(function(){
   const t1 = buildBackHTML('mean', '').includes('Ví dụ') === false;
   console.assert(t1, 'buildBackHTML should hide example when empty');
-
   const t2 = escapeHTML('<b>&"\'') === '&lt;b&gt;&amp;&quot;&#39;';
   console.assert(t2, 'escapeHTML should encode HTML entities');
 })();
