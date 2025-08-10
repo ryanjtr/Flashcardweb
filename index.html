@@ -425,7 +425,7 @@ async function previewEnrichFront(){
   setSync('Đang tải dữ liệu…','work');
   await cloudPull(true);               // auto pull khi mở
   setSync('Sẵn sàng', 'ok');
-  setInterval(()=> cloudPull(true), 10*60*1000); // 10 phút/lần nếu rảnh
+  setInterval(()=> cloudPull(true), 10000); // 10 phút/lần nếu rảnh
 })();
 </script>
 </body>
