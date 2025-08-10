@@ -103,6 +103,8 @@ const STORAGE_KEY = 'flashcards_v3_plain';
 let cards = loadInitial();
 let currentId = cards[0]?.id || null;
 let flipped = false;
+const APP_BUILD = '11:10'; 
+console.log('Build:', APP_BUILD);
 
 const el = {
   search: document.getElementById('search'),
