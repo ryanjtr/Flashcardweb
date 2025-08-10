@@ -5,33 +5,63 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Flash Cards • Học nhanh</title>
 <style>
-  :root { --bg1:#0f172a; --bg2:#1e293b; --fg:#f1f5f9; --muted:#cbd5e1;
-          --panel:rgba(255,255,255,.06); --panel2:rgba(255,255,255,.1); --border:rgba(255,255,255,.18);
-          --accent:rgba(56,189,248,.25); }
+  :root {
+    --bg1:#0f172a; --bg2:#1e293b; --fg:#f1f5f9; --muted:#cbd5e1;
+    --panel:rgba(255,255,255,.06); --panel2:rgba(255,255,255,.1); --border:rgba(255,255,255,.18);
+    --accent:rgba(56,189,248,.25); --good:#10b981; --warn:#38bdf8; --bad:#f43f5e;
+  }
   *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Helvetica,Arial,sans-serif;
-       background:linear-gradient(135deg,var(--bg2),var(--bg1));color:var(--fg)}
+  body{
+    margin:0;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Helvetica,Arial,sans-serif;
+    background:linear-gradient(135deg,var(--bg2),var(--bg1));
+    color:var(--fg)
+  }
   header,footer{padding:10px 20px}
   header h1{margin:0;font-size:1.4rem}
   #stats{opacity:.9;margin-top:4px;font-size:.9rem}
-  main{display:flex;gap:20px;padding:20px;align-items:flex-start;flex-wrap:wrap}
-  .col{flex:1 1 360px;min-width:320px}
+  main{display:grid;grid-template-columns:minmax(260px,320px) 1fr 380px;gap:20px;padding:20px;align-items:start}
+  @media (max-width:1100px){ main{grid-template-columns:1fr;}}
   .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
-  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  input,textarea,select{width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:rgba(15,23,42,.5);color:var(--fg);outline:none}
+  .row{display:flex;gap:8px;align-items:center}
+  input,textarea,select{
+    width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);
+    background:rgba(15,23,42,.5);color:var(--fg);outline:none
+  }
   input:focus,textarea:focus,select:focus{box-shadow:0 0 0 2px var(--accent)}
-  .btn{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--fg);cursor:pointer}
+  .btn{
+    padding:8px 12px;border-radius:8px;border:1px solid var(--border);
+    background:var(--panel);color:var(--fg);cursor:pointer
+  }
   .btn:hover{background:var(--panel2)}
-  #card{min-height:260px;position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center;text-align:center}
+  .btn.ghost{background:transparent}
+  .btn.danger{border-color:rgba(244,63,94,.4)}
+  .btn.good{border-color:rgba(16,185,129,.45)}
+  .btn.primary{border-color:rgba(56,189,248,.45)}
+  /* Card */
+  #card{
+    min-height:280px;position:relative;cursor:pointer;display:flex;align-items:center;
+    justify-content:center;text-align:center;border-radius:16px
+  }
   #card .badge{position:absolute;left:10px;top:10px;display:flex;gap:6px;align-items:center}
   .ipa{font-size:.8rem;background:rgba(0,0,0,.35);padding:2px 6px;border-radius:6px}
   #loading{font-size:.9rem;color:var(--muted)}
   .list{max-height:460px;overflow:auto}
-  .list-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:10px;background:var(--panel);border:1px solid var(--border);cursor:pointer;margin-bottom:6px}
+  .list-item{
+    display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:10px;
+    background:var(--panel);border:1px solid var(--border);cursor:pointer;margin-bottom:6px
+  }
   .list-item.active{background:var(--accent)}
   small{color:var(--muted)}
-  .kpx{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
-  /* Badge trạng thái sync */
+  .kpx{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
+  /* Sets sidebar */
+  .set-item{
+    display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;border-radius:10px;
+    border:1px solid var(--border);background:var(--panel);margin-bottom:6px;cursor:pointer
+  }
+  .set-item.active{background:rgba(56,189,248,.2);border-color:rgba(56,189,248,.4)}
+  .set-actions{display:flex;gap:6px}
+  /* Sync status badge */
   #syncStatus{
     position:fixed; right:12px; bottom:12px; padding:8px 12px; border-radius:10px;
     background:rgba(15,23,42,.75); border:1px solid var(--border); font-size:.85rem;
@@ -40,6 +70,7 @@
   #syncStatus.ok { border-color:rgba(16,185,129,.45) }
   #syncStatus.work { border-color:rgba(56,189,248,.45) }
   #syncStatus.err { border-color:rgba(244,63,94,.55) }
+  .muted{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -50,29 +81,30 @@
 </header>
 
 <main>
-  <!-- Cột trái: xem & thao tác -->
-  <section class="col panel" style="display:flex;flex-direction:column;gap:12px;">
-
-    <!-- Bộ thẻ (sets) -->
-    <div class="panel">
-      <div class="row">
-        <select id="setSelect" title="Chọn bộ thẻ" style="flex:1 1 220px;"></select>
-        <button id="setAddBtn" class="btn" title="Tạo bộ thẻ mới">+ Bộ thẻ</button>
-        <button id="setRenameBtn" class="btn" title="Đổi tên bộ thẻ">Đổi tên</button>
-        <button id="setDeleteBtn" class="btn" title="Xóa bộ thẻ">Xóa bộ</button>
-      </div>
+  <!-- Left: Sets (folders) -->
+  <aside class="panel" id="setsPanel">
+    <div class="row" style="justify-content:space-between">
+      <h3 style="margin:6px 0 10px">Bộ thẻ (giống Quizlet)</h3>
+      <button id="addSetBtn" class="btn primary">+ Bộ mới</button>
     </div>
+    <div id="setsList"></div>
+    <div class="row" style="margin-top:8px">
+      <input id="wsInput" placeholder="Workspace ID (chung phòng)" />
+      <button id="wsApplyBtn" class="btn">Đổi phòng</button>
+    </div>
+    <div class="muted" style="margin-top:6px;font-size:.85rem">
+      Ai cùng <b>Workspace</b> sẽ đồng bộ chung.
+    </div>
+  </aside>
 
-    <!-- Ô tìm kiếm + điều hướng thẻ -->
-    <div class="row">
+  <!-- Middle: Card viewer -->
+  <section class="panel" style="display:flex;flex-direction:column;gap:12px;">
+    <div class="row" style="flex-wrap:wrap">
       <input id="search" placeholder="Tìm thẻ..." style="flex:1 1 220px;">
-      <button id="prevBtn" class="btn" title="Trước (←)">←</button>
-      <button id="nextBtn" class="btn" title="Sau (→)">→</button>
-      <button id="deleteBtn" class="btn" title="Xóa thẻ hiện tại (Delete)">🗑</button>
+      <!-- Bỏ export/import + cloud buttons vì auto sync -->
     </div>
 
-    <!-- Flashcard -->
-    <div id="card" class="panel" style="min-height:280px">
+    <div id="card" class="panel">
       <div class="badge">
         <span id="cardIpa" class="ipa"></span>
         <button id="speakBtn" class="btn" title="Phát âm">🔊</button>
@@ -81,29 +113,29 @@
       <div id="cardContent" style="white-space:pre-line;font-size:1.6rem;line-height:1.4"></div>
     </div>
 
-    <!-- Hành động thẻ -->
-    <div class="kpx">
+    <div class="kpx" style="justify-content:center">
+      <button id="prevBtn" class="btn">← Trước</button>
       <button id="unknownBtn" class="btn" title="D">Chưa thuộc</button>
       <button id="flipBtn" class="btn">Lật thẻ</button>
       <button id="knownBtn" class="btn" title="A">Đã thuộc</button>
+      <button id="nextBtn" class="btn">Sau →</button>
+      <button id="deleteBtn" class="btn danger">Xoá thẻ</button>
       <span id="loading" hidden>Đang lấy IPA…</span>
     </div>
   </section>
 
-  <!-- Cột phải: thêm từ & danh sách -->
-  <aside class="col" style="display:flex;flex-direction:column;gap:12px;">
+  <!-- Right: Add + list -->
+  <aside class="panel" style="display:flex;flex-direction:column;gap:12px;">
     <div class="panel">
       <h3 style="margin:6px 0 10px">Thêm từ mới</h3>
       <input id="inFront" placeholder="Thông tin 1 (Mặt trước) — tự thêm IPA & phát âm">
       <div id="frontHint"><small></small></div>
       <textarea id="inBack" rows="4" placeholder="Thông tin 2 (Mặt sau) — nghĩa/ghi chú"></textarea>
       <div class="row" style="margin-top:8px">
-        <button id="addBtn" class="btn" style="flex:1" title="N">Thêm từ</button>
+        <button id="addBtn" class="btn good" style="flex:1" title="N">Thêm từ</button>
         <button id="clearBtn" class="btn">Xoá nhập</button>
       </div>
-      <div style="margin-top:6px"><small>
-        Phím tắt: A = Đã thuộc, D = Chưa thuộc, Space/Enter = Lật, N = Nhập nhanh, ←/→ = chuyển thẻ, Delete = Xóa thẻ
-      </small></div>
+      <div style="margin-top:6px"><small>Mẹo: A = Đã thuộc, D = Chưa thuộc, Space/Enter = Lật, N = Nhập nhanh</small></div>
     </div>
 
     <div class="panel">
@@ -114,87 +146,38 @@
 </main>
 
 <footer>
-  © 2025 — Lưu tự động trong trình duyệt • Có IPA & phát âm
+  © 2025 — Lưu tự động trong trình duyệt • Có IPA & phát âm • Đồng bộ nhiều người dùng
 </footer>
 
-<!-- Badge trạng thái đồng bộ -->
+<!-- Sync status -->
 <div id="syncStatus" class="work">Đang khởi tạo…</div>
 
 <script>
-/* =================== State tổng (nhiều bộ thẻ) =================== */
+/* ========= Config ========= */
+/* NHỚ đổi cho trùng với Apps Script bạn đã triển khai */
+const API_URL      = 'PASTE_YOUR_WEB_APP_URL/exec'; // ví dụ: https://script.google.com/macros/s/AKfycb.../exec
+const API_TOKEN    = 'YOUR_TOKEN_HERE';
+let   WORKSPACE_ID = localStorage.getItem('flashcards_ws') || 'global'; // phòng chung
+
+/* ========= Local State ========= */
+/** Dạng lưu đa bộ thẻ:
+ * state = {
+ *   version: 4,
+ *   activeSetId: 'set_x',
+ *   sets: [{ id, name, cards:[{id,front,back,ipa,audio,example,known,unknown,last}], createdAt }]
+ * }
+ */
 const STORAGE_KEY = 'flashcards_v4_sets';
-
-let state = loadInitialState();
-/*
-  state = {
-    version: 4,
-    activeSetId: 'set_xxx',
-    sets: [
-      { id:'set_1', name:'Bộ thẻ của tôi', cards:[{id,front,back,ipa,audio,example,known,unknown,last}, ...] },
-      ...
-    ]
-  }
-*/
-function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); setDirty(); }
-function loadInitialState(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw){
-      const s = JSON.parse(raw);
-      if(s && Array.isArray(s.sets) && s.sets.length){
-        // đảm bảo có activeSetId hợp lệ
-        if(!s.activeSetId || !s.sets.find(x=>x.id===s.activeSetId)){
-          s.activeSetId = s.sets[0].id;
-        }
-        return { version: 4, ...s };
-      }
-    }
-  }catch(_){}
-  // Migration từ v3: nếu có cards cũ thì chuyển thành 1 bộ
-  const oldKey = 'flashcards_v3_plain';
-  let migratedCards = [];
-  try{
-    const rawOld = localStorage.getItem(oldKey);
-    if(rawOld){
-      const arr = JSON.parse(rawOld);
-      if(Array.isArray(arr)) migratedCards = arr;
-    }
-  }catch(_){}
-  const defaultSet = {
-    id: uid('set_'),
-    name: 'Bộ thẻ của tôi',
-    cards: migratedCards.length ? migratedCards : sampleCards()
-  };
-  return { version: 4, activeSetId: defaultSet.id, sets:[defaultSet] };
-}
-
-/* =================== Helpers chung =================== */
-function uid(prefix=''){ return (prefix||'') + Math.random().toString(36).slice(2) + Date.now().toString(36) }
-function sampleCards(){
-  return [
-    { id:uid('c_'), front:"hello", back:"xin chào", known:0, unknown:0, last:0, ipa:"/həˈləʊ/", audio:"", example:"Hello! Nice to meet you." },
-    { id:uid('c_'), front:"embedded", back:"nhúng (kỹ thuật)", known:0, unknown:0, last:0, ipa:"/ɪmˈbɛdɪd/", audio:"", example:"" },
-  ];
-}
-function activeSet(){ return state.sets.find(s => s.id === state.activeSetId) }
-function currentCards(){ return activeSet()?.cards || [] }
-function setCards(newCards){ const s = activeSet(); if(!s) return; s.cards = newCards; }
-function currentCardById(id){ return currentCards().find(c=>c.id===id) }
-
-/* =================== Biến UI & sync =================== */
-let currentId = currentCards()[0]?.id || null;
+let state = loadState();
+let currentId = firstCardId();
 let flipped = false;
-let dirty = false;          // có thay đổi local chưa đẩy
-let lastSync = 0;
-let pushTimer = null;
 
+let dirty = false;        // có thay đổi local chưa đẩy
+let lastSync = 0;         // timestamp sync gần nhất
+let pushTimer = null;     // debounce push
+
+/* ========= Element refs ========= */
 const el = {
-  // Sets
-  setSelect: document.getElementById('setSelect'),
-  setAddBtn: document.getElementById('setAddBtn'),
-  setRenameBtn: document.getElementById('setRenameBtn'),
-  setDeleteBtn: document.getElementById('setDeleteBtn'),
-  // Cards UI
   search: document.getElementById('search'),
   card: document.getElementById('card'),
   cardContent: document.getElementById('cardContent'),
@@ -202,10 +185,10 @@ const el = {
   speakBtn: document.getElementById('speakBtn'),
   knownBtn: document.getElementById('knownBtn'),
   unknownBtn: document.getElementById('unknownBtn'),
+  flipBtn: document.getElementById('flipBtn'),
   prevBtn: document.getElementById('prevBtn'),
   nextBtn: document.getElementById('nextBtn'),
   deleteBtn: document.getElementById('deleteBtn'),
-  flipBtn: document.getElementById('flipBtn'),
   inFront: document.getElementById('inFront'),
   inBack: document.getElementById('inBack'),
   frontHint: document.getElementById('frontHint'),
@@ -215,9 +198,58 @@ const el = {
   stats: document.getElementById('stats'),
   loading: document.getElementById('loading'),
   sync: document.getElementById('syncStatus'),
+  setsList: document.getElementById('setsList'),
+  addSetBtn: document.getElementById('addSetBtn'),
+  wsInput: document.getElementById('wsInput'),
+  wsApplyBtn: document.getElementById('wsApplyBtn'),
 };
 
-/* =================== Dictionary (IPA + audio) =================== */
+/* ========= Utils ========= */
+function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36) }
+function now(){ return Date.now() }
+function hhmmss(d=new Date()){ return d.toTimeString().slice(0,8) }
+function escapeHTML(s){
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
+
+/* ========= State helpers ========= */
+function sampleSet(){
+  return {
+    id: 'set_sample',
+    name: 'Bộ mẫu',
+    createdAt: now(),
+    cards: [
+      { id:uid(), front:"hello", back:"xin chào", known:0, unknown:0, last:0, ipa:"/həˈləʊ/", audio:"", example:"Hello! Nice to meet you." },
+      { id:uid(), front:"embedded", back:"nhúng (kỹ thuật)", known:0, unknown:0, last:0, ipa:"/ɪmˈbɛdɪd/", audio:"", example:"" },
+    ]
+  };
+}
+function defaultState(){
+  const s = sampleSet();
+  return { version:4, activeSetId:s.id, sets:[s] };
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return defaultState();
+    const d = JSON.parse(raw);
+    if(!d || !Array.isArray(d.sets)) return defaultState();
+    // migrate
+    if(!d.version) d.version = 4;
+    if(!d.activeSetId || !d.sets.find(x=>x.id===d.activeSetId)) d.activeSetId = d.sets[0]?.id || '';
+    return d;
+  }catch(_){ return defaultState(); }
+}
+function saveState(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+function activeSet(){ return state.sets.find(s=>s.id===state.activeSetId) || state.sets[0] }
+function currentCards(){ const s = activeSet(); return s ? s.cards : [] }
+function firstCardId(){ return currentCards()[0]?.id || null }
+function currentCard(){ return currentCards().find(c=>c.id===currentId) }
+
+/* ========= Dictionary (IPA + audio) ========= */
 async function fetchDictionary(term){
   const q = String(term || '').trim();
   if(!q) return { ipa:'', audio:'', example:'', pos:[] };
@@ -226,7 +258,6 @@ async function fetchDictionary(term){
     if(!res.ok) throw new Error('no def');
     const data = await res.json();
     const entry = Array.isArray(data) && data[0] ? data[0] : null;
-
     let ipa='', audio='', example='', pos=[];
     if(entry?.phonetics?.length){
       const p = entry.phonetics.find(x=>x.text) || entry.phonetics[0];
@@ -237,7 +268,7 @@ async function fetchDictionary(term){
     if(entry?.meanings?.length){
       pos = entry.meanings.map(m=>m.partOfSpeech).filter(Boolean);
       const defWithEx = entry.meanings.flatMap(m => m.definitions || []).find(d => d.example);
-      if(defWithEx?.example) example = defWithEx.example;
+      if(defWithEx?.example) example = defWithEx.example; // có thì hiển thị, không thì thôi
     }
     return { ipa, audio, example, pos };
   }catch(e){
@@ -245,36 +276,15 @@ async function fetchDictionary(term){
   }
 }
 
-/* =================== Render Sets =================== */
-function renderSets(){
-  el.setSelect.innerHTML = '';
-  state.sets.forEach(s=>{
-    const opt = document.createElement('option');
-    opt.value = s.id; opt.textContent = `${s.name} (${s.cards.length})`;
-    if(s.id === state.activeSetId) opt.selected = true;
-    el.setSelect.appendChild(opt);
-  });
-}
-function switchSet(id){
-  if(!state.sets.find(s=>s.id===id)) return;
-  state.activeSetId = id;
-  const cs = currentCards();
-  currentId = cs[0]?.id || null;
-  flipped = false;
-  saveState();
-  renderSets(); renderCard(); renderList();
-  setSync('Đang ở: ' + (activeSet()?.name || ''), 'ok');
-}
-
-/* =================== Render Cards =================== */
+/* ========= Rendering ========= */
 function buildBackHTML(back, example){
   if(example){ return `${escapeHTML(back)}\n\n${wrapSmall('Ví dụ: ' + example)}`; }
   return escapeHTML(back);
 }
 function renderCard(){
-  const c = currentCards().find(x=>x.id===currentId);
+  const c = currentCard();
   if(!c){
-    el.cardContent.textContent = "Chưa có thẻ nào. Hãy thêm từ ở bên phải.";
+    el.cardContent.textContent = "Chưa có thẻ nào trong bộ đang chọn. Hãy thêm từ ở bên phải.";
     el.cardIpa.textContent = ''; return;
   }
   el.cardIpa.textContent = c.ipa || '';
@@ -283,95 +293,128 @@ function renderCard(){
 }
 function renderList(){
   el.list.innerHTML = '';
-  const q = el.search.value.trim().toLowerCase();
-  const filtered = currentCards().filter(c => !q || c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q));
-  filtered.forEach(c=>{
+  const q = (el.search.value||'').trim().toLowerCase();
+  const cards = currentCards().filter(c => !q || c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q));
+  cards.forEach(c=>{
     const div = document.createElement('div');
     div.className = 'list-item' + (c.id===currentId ? ' active' : '');
     div.innerHTML = `<span>${escapeHTML(c.front)} ${c.ipa?`<small>${escapeHTML(c.ipa)}</small>`:''}</span>
-                     <span><small>${c.known}✓ ${c.unknown}×</small></span>`;
-    div.onclick = ()=>{ currentId = c.id; flipped = false; renderCard(); renderList(); };
+                     <span class="row">
+                       <small>${c.known}✓ ${c.unknown}×</small>
+                       <button class="btn danger btn-del" title="Xoá">X</button>
+                     </span>`;
+    div.onclick = (e)=>{ if(e.target.classList.contains('btn-del')) return; currentId = c.id; flipped = false; renderCard(); renderList(); };
+    div.querySelector('.btn-del').onclick = (e)=>{ e.stopPropagation(); deleteCard(c.id); };
     el.list.appendChild(div);
   });
   const total = currentCards().length;
   const k = currentCards().reduce((s,x)=>s+x.known,0);
   const u = currentCards().reduce((s,x)=>s+x.unknown,0);
-  el.stats.textContent = `Bộ: ${(activeSet()?.name)||''} • Tổng: ${total} • Đã thuộc: ${k} • Chưa thuộc: ${u}`;
+  el.stats.textContent = `Bộ: ${activeSet()?.name || ''} • Tổng: ${total} • Đã thuộc: ${k} • Chưa thuộc: ${u}`;
+}
+function renderSets(){
+  el.setsList.innerHTML = '';
+  state.sets.forEach(s=>{
+    const wrap = document.createElement('div');
+    wrap.className = 'set-item' + (s.id===state.activeSetId ? ' active':'');
+    wrap.innerHTML = `
+      <div style="min-width:0;flex:1">
+        <div class="row" style="gap:6px">
+          <strong style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(s.name)}</strong>
+          <small class="muted">(${s.cards.length})</small>
+        </div>
+      </div>
+      <div class="set-actions">
+        <button class="btn ghost btn-rename" title="Đổi tên">✏️</button>
+        <button class="btn danger btn-delset" title="Xoá bộ">🗑️</button>
+      </div>`;
+    wrap.onclick = (e)=>{ 
+      if(e.target.closest('.btn-rename') || e.target.closest('.btn-delset')) return;
+      state.activeSetId = s.id; saveState();
+      currentId = firstCardId(); flipped=false;
+      renderSets(); renderCard(); renderList();
+      setDirty();
+    };
+    wrap.querySelector('.btn-rename').onclick = (e)=>{
+      e.stopPropagation();
+      const name = prompt('Tên bộ thẻ:', s.name);
+      if(!name) return;
+      s.name = name.trim();
+      saveState(); renderSets(); setDirty();
+    };
+    wrap.querySelector('.btn-delset').onclick = (e)=>{
+      e.stopPropagation();
+      if(!confirm(`Xoá bộ "${s.name}"?`)) return;
+      const idx = state.sets.findIndex(x=>x.id===s.id);
+      if(idx>=0){
+        state.sets.splice(idx,1);
+        if(state.sets.length===0){
+          const ns = sampleSet();
+          state.sets.push(ns); state.activeSetId = ns.id;
+        }else if(state.activeSetId===s.id){
+          state.activeSetId = state.sets[0].id;
+        }
+        currentId = firstCardId();
+        saveState(); renderSets(); renderCard(); renderList(); setDirty();
+      }
+    };
+    el.setsList.appendChild(wrap);
+  });
 }
 
-/* =================== Card Actions =================== */
-function indexOfCurrent(){
-  return currentCards().findIndex(c => c.id === currentId);
+/* ========= Actions ========= */
+function nextCard(){
+  const cards = currentCards();
+  if(!cards.length) return;
+  const idx = cards.findIndex(c => c.id === currentId);
+  const next = (idx >= 0 ? (idx+1) % cards.length : 0);
+  currentId = cards[next].id; flipped = false; renderCard(); renderList();
 }
 function prevCard(){
   const cards = currentCards();
   if(!cards.length) return;
-  const idx = indexOfCurrent();
-  const prev = (idx > 0 ? idx - 1 : cards.length - 1);
+  const idx = cards.findIndex(c => c.id === currentId);
+  const prev = (idx > 0 ? idx-1 : cards.length-1);
   currentId = cards[prev].id; flipped = false; renderCard(); renderList();
 }
-function nextCard(){
-  const cards = currentCards();
-  if(!cards.length) return;
-  const idx = indexOfCurrent();
-  const next = (idx >= 0 ? (idx + 1) % cards.length : 0);
-  currentId = cards[next].id; flipped = false; renderCard(); renderList();
-}
-function deleteCurrent(){
-  const cards = currentCards();
-  const idx = indexOfCurrent();
-  if(idx < 0) return;
-  const removed = cards.splice(idx, 1)[0];
-  saveState();
-  if(cards.length){
-    const next = idx < cards.length ? idx : cards.length - 1;
-    currentId = cards[next].id;
-  } else {
-    currentId = null;
-  }
-  flipped = false;
-  renderCard(); renderList();
-  console.debug('Deleted card:', removed?.front);
-}
 function mark(isKnown){
-  const c = currentCards().find(x=>x.id===currentId); if(!c) return;
+  const cards = currentCards();
+  const c = cards.find(x=>x.id===currentId); if(!c) return;
   if(isKnown) c.known++; else c.unknown++; c.last = Date.now();
-  saveState(); nextCard();
+  saveState(); setDirty(); nextCard(); // auto sang thẻ sau
 }
-async function enrichCardById(id, front){
+function deleteCard(id){
+  const s = activeSet(); if(!s) return;
+  const idx = s.cards.findIndex(c=>c.id===id);
+  if(idx<0) return;
+  s.cards.splice(idx,1);
+  saveState(); setDirty();
+  currentId = firstCardId(); flipped=false; renderCard(); renderList();
+}
+async function enrichCardById(id, term){
   el.loading.hidden = false;
-  const d = await fetchDictionary(front);
-  const c = currentCards().find(x=>x.id===id);
+  const s = activeSet(); if(!s){ el.loading.hidden=true; return; }
+  const d = await fetchDictionary(term);
+  const c = s.cards.find(x=>x.id===id);
   if(c){
     c.ipa = d.ipa || c.ipa;
     c.audio = d.audio || c.audio;
     c.example = d.example || c.example || '';
-    saveState();
-    if(currentId === id) renderCard();
-    renderList();
+    saveState(); renderCard(); renderList(); setDirty(); // mark dirty để sync
   }
   el.loading.hidden = true;
 }
 
-/* =================== Utils =================== */
-function escapeHTML(s){
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
-function hhmmss(d=new Date()){ return d.toTimeString().slice(0,8) }
-
-/* =================== Cloud Sync (JSONP) =================== */
-/* NHỚ cập nhật cho trùng Apps Script của bạn */
-const API_URL   = 'https://script.google.com/macros/s/AKfycbzhUxmJNJCGoHjgQM8Q7BJHLnjAp00pKMTbnhPsDOY17wMGG_TFEgwCfhuWusfIqBD-yA/exec';
-const API_TOKEN = 'abcdefgh';
-
+/* ========= JSONP (tránh CORS) ========= */
 function jsonp(url, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
     const finalUrl = url + (url.includes('?') ? '&' : '?') + 'callback=' + cbName;
+
     const script = document.createElement('script');
     let done = false;
     const timer = setTimeout(() => { if (done) return; done = true; cleanup(); reject(new Error('JSONP timeout')); }, timeoutMs);
+
     function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
     window[cbName] = (data)=>{ if(done) return; done = true; cleanup(); resolve(data); };
     script.onerror = ()=>{ if(done) return; done = true; cleanup(); reject(new Error('JSONP load error')); };
@@ -385,6 +428,7 @@ function b64webSafeFromJSON(obj){
   return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
 
+/* ========= Sync UI & Debounce ========= */
 function setSync(text, cls='work'){
   el.sync.className = cls ? cls.replace(/^/,'') : '';
   el.sync.classList.add(cls);
@@ -401,53 +445,36 @@ function schedulePush(delay=1500){
   pushTimer = setTimeout(()=> cloudPush(true).catch(()=>{}), delay);
 }
 
+/* ========= Cloud Sync (multi-user) ========= */
 async function cloudPull(silent=true){
   try{
     if(!silent) setSync('Đang tải từ cloud…','work');
-    const url = `${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`;
+    const url = `${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}&ws=${encodeURIComponent(WORKSPACE_ID)}`;
     const j = await jsonp(url);
-    if(j.ok){
-      // Hỗ trợ 2 kiểu: {state} mới hoặc {data:[cards]} cũ
-      if(j.state && Array.isArray(j.state.sets)){
-        if(!dirty){
-          state = { version:4, ...j.state };
-          // đảm bảo active set hợp lệ
-          if(!state.activeSetId || !state.sets.find(x=>x.id===state.activeSetId)){
-            state.activeSetId = state.sets[0]?.id;
-          }
-          currentId = currentCards()[0]?.id || null;
-          saveState(); flipped=false; renderSets(); renderCard(); renderList();
-          lastSync = Date.now();
-          setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
+    if(j.ok && j.state && Array.isArray(j.state.sets)){
+      if(!dirty){
+        state = { version:4, ...j.state };
+        if(!state.activeSetId || !state.sets.find(x=>x.id===state.activeSetId)){
+          state.activeSetId = state.sets[0]?.id || '';
         }
-      } else if(Array.isArray(j.data)) {
-        // Dữ liệu cũ → gán vào bộ hiện tại
-        if(!dirty){
-          const s = activeSet(); if(s){ s.cards = j.data; }
-          currentId = currentCards()[0]?.id || null;
-          saveState(); flipped=false; renderSets(); renderCard(); renderList();
-          lastSync = Date.now();
-          setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
-        }
-      } else {
-        setSync('Cloud pull: dữ liệu không hợp lệ', 'err');
+        currentId = firstCardId();
+        saveState(); flipped=false; renderSets(); renderCard(); renderList();
+        lastSync = Date.now();
+        setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
       }
       return true;
     } else {
-      setSync('Cloud pull thất bại', 'err');
-      throw new Error('pull-failed');
+      setSync('Cloud pull thất bại', 'err'); throw new Error('pull-failed');
     }
   }catch(e){ console.error(e); setSync('Cloud pull lỗi mạng', 'err'); throw e; }
 }
-
 async function cloudPush(silent=false){
   try{
-    // Gửi cả state (mới) và cards (tương thích cũ)
-    const payload = { state, cards: currentCards() };
+    const payload = { state }; // gửi toàn bộ state (nhiều bộ thẻ)
     const dataB64 = b64webSafeFromJSON(payload);
-    if (dataB64.length > 6000) { setSync('Bộ thẻ quá lớn để đẩy qua JSONP (dùng backup JSON riêng)', 'err'); throw new Error('payload-too-large'); }
+    if (dataB64.length > 6000) { setSync('Dữ liệu lớn cho JSONP (dùng backup / tách bộ)', 'err'); throw new Error('payload-too-large'); }
     if(!silent) setSync('Đang đẩy lên cloud…','work');
-    const url = `${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${dataB64}`;
+    const url = `${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&ws=${encodeURIComponent(WORKSPACE_ID)}&data=${dataB64}`;
     const j = await jsonp(url, 20000);
     if(j.ok){
       dirty = false;
@@ -455,8 +482,7 @@ async function cloudPush(silent=false){
       setSync('Đã đồng bộ (push) ' + hhmmss(new Date(lastSync)), 'ok');
       return true;
     } else {
-      setSync('Cloud push thất bại', 'err');
-      throw new Error('push-failed');
+      setSync('Cloud push thất bại', 'err'); throw new Error('push-failed');
     }
   }catch(e){
     console.error(e);
@@ -465,82 +491,37 @@ async function cloudPush(silent=false){
   }
 }
 
-/* =================== Events =================== */
-// Sets
-el.setSelect.onchange = ()=> switchSet(el.setSelect.value);
-el.setAddBtn.onclick = ()=>{
-  const name = prompt('Tên bộ thẻ mới:', 'Bộ thẻ mới');
-  if(!name) return;
-  const s = { id: uid('set_'), name: name.trim(), cards: [] };
-  state.sets.unshift(s);
-  state.activeSetId = s.id;
-  currentId = null;
-  saveState();
-  renderSets(); renderCard(); renderList();
-};
-el.setRenameBtn.onclick = ()=>{
-  const s = activeSet(); if(!s) return;
-  const name = prompt('Đổi tên bộ thẻ:', s.name);
-  if(!name) return;
-  s.name = name.trim();
-  saveState(); renderSets(); renderList();
-};
-el.setDeleteBtn.onclick = ()=>{
-  if(state.sets.length <= 1){ alert('Cần ít nhất 1 bộ thẻ. Không thể xoá.'); return; }
-  const s = activeSet(); if(!s) return;
-  if(!confirm(`Xoá bộ "${s.name}"?`)) return;
-  state.sets = state.sets.filter(x => x.id !== s.id);
-  state.activeSetId = state.sets[0].id;
-  currentId = currentCards()[0]?.id || null;
-  saveState(); renderSets(); renderCard(); renderList();
-};
-
-// Cards
+/* ========= Events ========= */
 el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
 el.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
 el.knownBtn.onclick = ()=> mark(true);
 el.unknownBtn.onclick = ()=> mark(false);
 el.prevBtn.onclick = prevCard;
 el.nextBtn.onclick = nextCard;
-el.deleteBtn.onclick = deleteCurrent;
+el.deleteBtn.onclick = ()=>{ const c=currentCard(); if(!c) return; if(confirm('Xoá thẻ này?')) deleteCard(c.id); };
 el.search.oninput = renderList;
 
 el.addBtn.onclick = ()=>{
   const f = el.inFront.value.trim();
   const b = el.inBack.value.trim();
   if(!f || !b) return;
-  const card = { id:uid('c_'), front:f, back:b, known:0, unknown:0, last:0, ipa:'', audio:'', example:'' };
-  currentCards().unshift(card);
-  saveState();
-  currentId = card.id; flipped = false;
+  const s = activeSet(); if(!s) return;
+  const card = { id:uid(), front:f, back:b, known:0, unknown:0, last:0, ipa:'', audio:'', example:'' };
+  s.cards.unshift(card); saveState(); currentId = card.id; flipped = false;
   renderCard(); renderList(); enrichCardById(card.id, f);
   el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML='';
+  setDirty(); // auto push
 };
 el.clearBtn.onclick = ()=>{ el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML=''; el.inFront.focus(); };
 el.inFront.onblur = previewEnrichFront;
 el.speakBtn.onclick = (e)=>{
   e.stopPropagation();
-  const c = currentCards().find(x=>x.id===currentId); if(!c) return;
+  const c = currentCard(); if(!c) return;
   if(c.audio){ new Audio(c.audio).play(); }
   else{
     try{ const u = new SpeechSynthesisUtterance(c.front); u.lang='en-US'; u.rate=1; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(_){}
   }
 };
-
-window.addEventListener('keydown', (e)=>{
-  const tag = e.target && e.target.tagName;
-  if(tag === 'INPUT' || tag === 'TEXTAREA') return;
-  const k = e.key.toLowerCase();
-  if(k === ' ' || k === 'enter'){ e.preventDefault(); flipped=!flipped; renderCard(); }
-  else if(k === 'a'){ mark(true); }
-  else if(k === 'd'){ mark(false); }
-  else if(k === 'arrowleft'){ e.preventDefault(); prevCard(); }
-  else if(k === 'arrowright'){ e.preventDefault(); nextCard(); }
-  else if(k === 'delete'){ e.preventDefault(); deleteCurrent(); }
-  else if(k === 'n'){ el.inFront.focus(); }
-});
-
-/* Gợi ý IPA khi rời ô "Mặt trước" */
 async function previewEnrichFront(){
   const f = el.inFront.value.trim();
   if(!f){ el.frontHint.innerHTML=''; return; }
@@ -550,14 +531,50 @@ async function previewEnrichFront(){
   el.loading.hidden = true;
 }
 
-/* =================== Khởi động + Auto Sync =================== */
-function renderAll(){ renderSets(); renderCard(); renderList(); }
+/* Sets: create + change workspace */
+el.addSetBtn.onclick = ()=>{
+  const name = prompt('Tên bộ thẻ mới:','Bộ mới');
+  if(!name) return;
+  const s = { id: 'set_' + uid(), name: name.trim(), createdAt: now(), cards: [] };
+  state.sets.unshift(s);
+  state.activeSetId = s.id;
+  currentId = firstCardId();
+  saveState(); renderSets(); renderCard(); renderList(); setDirty();
+};
+el.wsInput.value = WORKSPACE_ID;
+el.wsApplyBtn.onclick = async ()=>{
+  const ws = (el.wsInput.value || '').trim() || 'global';
+  if(ws === WORKSPACE_ID) return;
+  WORKSPACE_ID = ws;
+  localStorage.setItem('flashcards_ws', WORKSPACE_ID);
+  setSync('Đổi phòng → pull dữ liệu…','work');
+  // lấy trên cloud của workspace mới (không đánh dấu dirty)
+  dirty = false;
+  await cloudPull(false).catch(()=>{});
+};
 
+/* Keyboard */
+window.addEventListener('keydown', (e)=>{
+  const tag = e.target && e.target.tagName;
+  if(tag === 'INPUT' || tag === 'TEXTAREA' || e.isComposing) return;
+  const k = e.key.toLowerCase();
+  if(k === ' ' || k === 'enter'){ e.preventDefault(); flipped=!flipped; renderCard(); }
+  else if(k === 'arrowright'){ nextCard(); }
+  else if(k === 'arrowleft'){ prevCard(); }
+  else if(k === 'a'){ mark(true); }
+  else if(k === 'd'){ mark(false); }
+  else if(k === 'n'){ el.inFront.focus(); }
+});
+
+/* ========= Auto behaviors =========
+   - Pull khi tải trang
+   - Mỗi 10 giây: nếu dirty → push; nếu sạch → pull
+   - Nếu dirty > 30s → force pull (phòng kẹt)
+*/
 (async function init(){
-  renderAll();
+  renderSets(); renderCard(); renderList();
   setSync('Đang tải dữ liệu…','work');
-  await cloudPull(true).catch(()=>{});
-  setSync('Sẵn sàng', 'ok');
+  try { await cloudPull(true); setSync('Sẵn sàng', 'ok'); } catch(_){ setSync('Offline (dùng bản local)', 'err'); }
 
   let dirtySince = 0;
   function autoSyncTick(){
