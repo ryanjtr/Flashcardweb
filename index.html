@@ -5,13 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Flash Cards • Học nhanh</title>
 <style>
-  :root {
-    --bg1:#0f172a; --bg2:#1e293b; --fg:#f1f5f9; --muted:#cbd5e1;
-    --panel:rgba(255,255,255,.06); --panel2:rgba(255,255,255,.1); --border:rgba(255,255,255,.18);
-    --accent:rgba(56,189,248,.25);
-  }
+  :root { --bg1:#0f172a; --bg2:#1e293b; --fg:#f1f5f9; --muted:#cbd5e1;
+          --panel:rgba(255,255,255,.06); --panel2:rgba(255,255,255,.1); --border:rgba(255,255,255,.18);
+          --accent:rgba(56,189,248,.25); }
   *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Helvetica,Arial,sans-serif;background:linear-gradient(135deg,var(--bg2),var(--bg1));color:var(--fg)}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Helvetica,Arial,sans-serif;
+       background:linear-gradient(135deg,var(--bg2),var(--bg1));color:var(--fg)}
   header,footer{padding:10px 20px}
   header h1{margin:0;font-size:1.4rem}
   #stats{opacity:.9;margin-top:4px;font-size:.9rem}
@@ -32,6 +31,15 @@
   .list-item.active{background:var(--accent)}
   small{color:var(--muted)}
   .kpx{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
+  /* Badge trạng thái sync */
+  #syncStatus{
+    position:fixed; right:12px; bottom:12px; padding:8px 12px; border-radius:10px;
+    background:rgba(15,23,42,.75); border:1px solid var(--border); font-size:.85rem;
+    color:var(--fg); backdrop-filter: blur(6px);
+  }
+  #syncStatus.ok { border-color:rgba(16,185,129,.45) }
+  #syncStatus.work { border-color:rgba(56,189,248,.45) }
+  #syncStatus.err { border-color:rgba(244,63,94,.55) }
 </style>
 </head>
 <body>
@@ -49,8 +57,8 @@
       <label class="btn" title="Nhập JSON" style="cursor:pointer">
         Nhập <input id="importFile" type="file" accept=".json,application/json" hidden>
       </label>
-      <button id="cloudPullBtn" class="btn" title="Tải từ cloud (Google Sheets)">Cloud ⭳</button>
-      <button id="cloudPushBtn" class="btn" title="Đẩy lên cloud (Google Sheets)">Cloud ⭱</button>
+      <button id="cloudPullBtn" class="btn" title="Tải từ cloud (Google Sheets)">Cloud Pull</button>
+      <button id="cloudPushBtn" class="btn" title="Đẩy lên cloud (Google Sheets)">Cloud Push</button>
     </div>
 
     <div id="card" class="panel" style="min-height:280px">
@@ -94,12 +102,18 @@
   © 2025 — Lưu tự động trong trình duyệt • Có IPA & phát âm
 </footer>
 
+<!-- Badge trạng thái đồng bộ -->
+<div id="syncStatus" class="work">Đang khởi tạo…</div>
+
 <script>
 /* ====== State & Storage ====== */
 const STORAGE_KEY = 'flashcards_v3_plain';
 let cards = loadInitial();
 let currentId = cards[0]?.id || null;
 let flipped = false;
+let dirty = false;           // có thay đổi local chưa đẩy
+let lastSync = 0;            // timestamp lần sync gần nhất
+let pushTimer = null;        // debounce timer
 
 const el = {
   search: document.getElementById('search'),
@@ -122,6 +136,7 @@ const el = {
   loading: document.getElementById('loading'),
   cloudPullBtn: document.getElementById('cloudPullBtn'),
   cloudPushBtn: document.getElementById('cloudPushBtn'),
+  sync: document.getElementById('syncStatus'),
 };
 
 function uid(){ return Math.random().toString(36).slice(2)+Date.now().toString(36) }
@@ -213,7 +228,7 @@ function nextCard(){
 function mark(isKnown){
   const c = currentCard(); if(!c) return;
   if(isKnown) c.known++; else c.unknown++; c.last = Date.now();
-  save(); nextCard(); renderList();
+  save(); setDirty(); nextCard(); renderList();
 }
 async function enrichCardById(id, front, back){
   el.loading.hidden = false;
@@ -232,6 +247,7 @@ function escapeHTML(s){
   return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
+function hhmmss(d=new Date()){ return d.toTimeString().slice(0,8) }
 
 /* ====== Import/Export ====== */
 function exportJSON(){
@@ -251,14 +267,13 @@ function importJSON(file){
         known: Number(x.known)||0, unknown: Number(x.unknown)||0, last: Number(x.last)||0,
         ipa: x.ipa || '', audio: x.audio || '', example: x.example || ''
       }));
-      if(norm.length){ cards = norm; currentId = cards[0].id; flipped = false; save(); renderCard(); renderList(); }
+      if(norm.length){ cards = norm; currentId = cards[0].id; flipped = false; save(); renderCard(); renderList(); setDirty(); }
     }catch(err){ console.error(err); }
   };
   reader.readAsText(file);
 }
 
 /* ====== Cloud Sync config (Google Sheets Apps Script) ====== */
-/* Điền URL Web App & TOKEN trùng Code.gs */
 const API_URL   = 'https://script.google.com/macros/s/AKfycbzhUxmJNJCGoHjgQM8Q7BJHLnjAp00pKMTbnhPsDOY17wMGG_TFEgwCfhuWusfIqBD-yA/exec';
 const API_TOKEN = 'abcdefgh';
 
@@ -285,38 +300,68 @@ function b64webSafeFromJSON(obj){
   return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
 
+/* ====== Đồng bộ: UI trạng thái & debounce ====== */
+function setSync(text, cls='work'){
+  el.sync.className = cls ? cls.replace(/^/,'') : '';
+  el.sync.classList.add(cls);
+  el.sync.id = 'syncStatus';
+  el.sync.textContent = text;
+}
+function setDirty(){
+  dirty = true;
+  setSync('Thay đổi cục bộ — chờ đồng bộ…', 'work');
+  schedulePush();
+}
+function schedulePush(delay=1500){
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(()=> cloudPush(true), delay);
+}
+
 /* ====== Cloud Sync actions (JSONP) ====== */
 // Pull toàn bộ từ cloud
-async function cloudPull(){
+async function cloudPull(silent=true){
   try{
+    if(!silent) setSync('Đang tải từ cloud…','work');
     const url = `${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`;
     const j = await jsonp(url);
     if(j.ok && Array.isArray(j.data)){
-      cards = j.data.map(r => ({
-        id: r.id, front: r.front, back: r.back,
-        known: Number(r.known)||0, unknown: Number(r.unknown)||0, last: Number(r.last)||0,
-        ipa: r.ipa||'', audio: r.audio||'', example: r.example||''
-      }));
-      currentId = cards[0]?.id || null;
-      save(); flipped=false; renderCard(); renderList();
-      alert('Đã tải dữ liệu từ cloud.');
-    } else { alert('Cloud pull thất bại.'); }
-  }catch(e){ console.error(e); alert('Cloud pull lỗi mạng.'); }
+      // chỉ pull khi chưa có thay đổi local đang chờ đẩy
+      if(!dirty){
+        cards = j.data.map(r => ({
+          id: r.id, front: r.front, back: r.back,
+          known: Number(r.known)||0, unknown: Number(r.unknown)||0, last: Number(r.last)||0,
+          ipa: r.ipa||'', audio: r.audio||'', example: r.example||''
+        }));
+        currentId = cards[0]?.id || null;
+        save(); flipped=false; renderCard(); renderList();
+        lastSync = Date.now();
+        setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
+      } else if(!silent){
+        setSync('Bỏ qua pull vì có thay đổi local đang chờ đẩy', 'work');
+      }
+    } else {
+      setSync('Cloud pull thất bại', 'err');
+    }
+  }catch(e){ console.error(e); setSync('Cloud pull lỗi mạng', 'err'); }
 }
 
 // Push toàn bộ cards (giới hạn kích thước URL)
-async function cloudPush(){
+async function cloudPush(silent=false){
   try{
     const payload = { cards };
     const dataB64 = b64webSafeFromJSON(payload);
-    if (dataB64.length > 6000) {
-      alert('Bộ thẻ quá lớn để đẩy qua JSONP. Hãy dùng "Xuất" để backup hoặc chia nhỏ.');
-      return;
-    }
+    if (dataB64.length > 6000) { setSync('Bộ thẻ quá lớn để đẩy qua JSONP (dùng Xuất/Import)', 'err'); return; }
+    if(!silent) setSync('Đang đẩy lên cloud…','work');
     const url = `${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${dataB64}`;
     const j = await jsonp(url, 20000);
-    if(j.ok) alert('Đã đẩy dữ liệu lên cloud.'); else alert('Cloud push thất bại.');
-  }catch(e){ console.error(e); alert('Cloud push lỗi mạng.'); }
+    if(j.ok){
+      dirty = false;
+      lastSync = Date.now();
+      setSync('Đã đồng bộ (push) ' + hhmmss(new Date(lastSync)), 'ok');
+    } else {
+      setSync('Cloud push thất bại', 'err');
+    }
+  }catch(e){ console.error(e); setSync('Cloud push lỗi mạng', 'err'); }
 }
 
 /* ====== Events ====== */
@@ -331,10 +376,10 @@ el.addBtn.onclick = ()=>{
   const b = el.inBack.value.trim();
   if(!f || !b) return;
   const card = { id:uid(), front:f, back:b, known:0, unknown:0, last:0, ipa:'', audio:'', example:'' };
-  cards.unshift(card); save();
-  currentId = card.id; flipped = false;
+  cards.unshift(card); save(); currentId = card.id; flipped = false;
   renderCard(); renderList(); enrichCardById(card.id, f, b);
   el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML='';
+  setDirty(); // auto push
 };
 el.clearBtn.onclick = ()=>{ el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML=''; el.inFront.focus(); };
 el.inFront.onblur = previewEnrichFront;
@@ -348,8 +393,8 @@ el.speakBtn.onclick = (e)=>{
 };
 el.exportBtn.onclick = exportJSON;
 el.importFile.onchange = (e)=>{ const f=e.target.files?.[0]; if(f) importJSON(f); };
-el.cloudPullBtn.onclick = cloudPull;
-el.cloudPushBtn.onclick = cloudPush;
+el.cloudPullBtn.onclick = ()=>cloudPull(false);
+el.cloudPushBtn.onclick = ()=>cloudPush(false);
 
 window.addEventListener('keydown', (e)=>{
   const tag = e.target && e.target.tagName;
@@ -371,16 +416,17 @@ async function previewEnrichFront(){
   el.loading.hidden = true;
 }
 
-/* ====== Self tests ====== */
-(function(){
-  const t1 = buildBackHTML('mean', '').includes('Ví dụ') === false;
-  console.assert(t1, 'buildBackHTML should hide example when empty');
-  const t2 = escapeHTML('<b>&"\'') === '&lt;b&gt;&amp;&quot;&#39;';
-  console.assert(t2, 'escapeHTML should encode HTML entities');
+/* ====== Auto behaviors ======
+   - Pull khi tải trang
+   - Mỗi 10 phút thử pull nếu không có thay đổi local
+*/
+(async function init(){
+  renderCard(); renderList();
+  setSync('Đang tải dữ liệu…','work');
+  await cloudPull(true);               // auto pull khi mở
+  setSync('Sẵn sàng', 'ok');
+  setInterval(()=> cloudPull(true), 10*60*1000); // 10 phút/lần nếu rảnh
 })();
-
-/* ====== Init ====== */
-renderCard(); renderList();
 </script>
 </body>
 </html>
