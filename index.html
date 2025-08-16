@@ -50,22 +50,18 @@
 </header>
 
 <main>
-  <!-- Cột trái: xem & thao tác -->
   <section class="col panel" style="display:flex;flex-direction:column;gap:12px;">
-
-    <!-- Bộ thẻ (sets) -->
     <div class="panel">
       <div class="row">
         <select id="setSelect" title="Chọn bộ thẻ" style="flex:1 1 220px;"></select>
-        <button id="setAddBtn" class="btn" title="Tạo bộ thẻ mới">+ Bộ thẻ</button>
-        <button id="setRenameBtn" class="btn" title="Đổi tên bộ thẻ">Đổi tên</button>
-        <button id="setDeleteBtn" class="btn" title="Xóa bộ thẻ">Xóa bộ</button>
+        <button id="setAddBtn" class="btn">+ Bộ thẻ</button>
+        <button id="setRenameBtn" class="btn">Đổi tên</button>
+        <button id="setDeleteBtn" class="btn">Xóa bộ</button>
         <button id="debugBtn" class="btn" title="Xem JSON cloud">📦</button>
       </div>
       <div id="debugBox"></div>
     </div>
 
-    <!-- Ô tìm kiếm + điều hướng thẻ -->
     <div class="row">
       <input id="search" placeholder="Tìm thẻ..." style="flex:1 1 220px;">
       <button id="prevBtn" class="btn" title="Trước (←)">←</button>
@@ -73,7 +69,6 @@
       <button id="deleteBtn" class="btn" title="Xóa thẻ hiện tại (Delete)">🗑</button>
     </div>
 
-    <!-- Flashcard -->
     <div id="card" class="panel" style="min-height:280px">
       <div class="badge">
         <span id="cardIpa" class="ipa"></span>
@@ -83,7 +78,6 @@
       <div id="cardContent" style="white-space:pre-line;font-size:1.6rem;line-height:1.4"></div>
     </div>
 
-    <!-- Hành động thẻ -->
     <div class="kpx">
       <button id="unknownBtn" class="btn" title="D">Chưa thuộc</button>
       <button id="flipBtn" class="btn">Lật thẻ</button>
@@ -92,7 +86,6 @@
     </div>
   </section>
 
-  <!-- Cột phải: thêm từ & danh sách -->
   <aside class="col" style="display:flex;flex-direction:column;gap:12px;">
     <div class="panel">
       <h3 style="margin:6px 0 10px">Thêm từ mới</h3>
@@ -116,7 +109,7 @@
 </main>
 
 <footer>
-  © Ver 1.3 — Lưu tự động trong trình duyệt • Có IPA & phát âm • Đồng bộ nhiều người dùng
+  © Ver 1.4 — Lưu tự động • IPA & phát âm • Đồng bộ nhiều người dùng
 </footer>
 
 <div id="syncStatus" class="work">Đang khởi tạo…</div>
@@ -124,14 +117,9 @@
 <script>
 /* =================== State tổng (nhiều bộ thẻ) =================== */
 const STORAGE_KEY = 'flashcards_v4_sets';
-
 let state = loadInitialState();
 /*
-  state = {
-    version: 4,
-    activeSetId: 'set_xxx',
-    sets: [ { id, name, cards:[{id,front,back,ipa,audio,example,known,unknown,last}] } ]
-  }
+ state = { version:4, activeSetId, sets:[{id,name,cards:[...]}] }
 */
 function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); setDirty(); }
 function loadInitialState(){
@@ -143,26 +131,12 @@ function loadInitialState(){
         if(!s.activeSetId || !s.sets.find(x=>x.id===s.activeSetId)){
           s.activeSetId = s.sets[0].id;
         }
-        return { version: 4, ...s };
+        return { version:4, ...s };
       }
     }
   }catch(_){}
-  // Migration từ v3
-  const oldKey = 'flashcards_v3_plain';
-  let migratedCards = [];
-  try{
-    const rawOld = localStorage.getItem(oldKey);
-    if(rawOld){
-      const arr = JSON.parse(rawOld);
-      if(Array.isArray(arr)) migratedCards = arr;
-    }
-  }catch(_){}
-  const defaultSet = {
-    id: uid('set_'),
-    name: 'Bộ thẻ của tôi',
-    cards: migratedCards.length ? migratedCards : sampleCards()
-  };
-  return { version: 4, activeSetId: defaultSet.id, sets:[defaultSet] };
+  const defaultSet = { id: uid('set_'), name:'Bộ thẻ của tôi', cards: sampleCards() };
+  return { version:4, activeSetId: defaultSet.id, sets:[defaultSet] };
 }
 
 /* =================== Helpers =================== */
@@ -176,6 +150,9 @@ function sampleCards(){
 function activeSet(){ return state.sets.find(s => s.id === state.activeSetId) }
 function currentCards(){ return activeSet()?.cards || [] }
 function indexOfCurrent(){ return currentCards().findIndex(c => c.id === currentId) }
+function escapeHTML(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
+function hhmmss(d=new Date()){ return d.toTimeString().slice(0,8) }
 
 /* =================== UI state =================== */
 let currentId = currentCards()[0]?.id || null;
@@ -183,6 +160,10 @@ let flipped = false;
 let dirty = false;
 let lastSync = 0;
 let pushTimer = null;
+/* Bộ nào bẩn thì chỉ push bộ đó */
+const dirtySets = new Set();
+/* Cache đánh dấu đã từng load thẻ bộ nào từ cloud */
+const loadedSets = new Set();
 
 const el = {
   setSelect: document.getElementById('setSelect'),
@@ -243,10 +224,6 @@ async function fetchDictionary(term){
 }
 
 /* =================== Render =================== */
-function escapeHTML(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
-function hhmmss(d=new Date()){ return d.toTimeString().slice(0,8) }
-
 function renderSets(){
   el.setSelect.innerHTML = '';
   state.sets.forEach(s=>{
@@ -290,13 +267,25 @@ function renderList(){
 
 /* =================== Card actions =================== */
 function switchSet(id){
+  const prevId = currentId; const wasFlipped = flipped;
   if(!state.sets.find(s=>s.id===id)) return;
   state.activeSetId = id;
-  const cs = currentCards();
-  currentId = cs[0]?.id || null;
-  flipped = false;
   saveState();
-  renderSets(); renderCard(); renderList();
+  renderSets();
+  // Nếu bộ này chưa có thẻ (và chưa load từ cloud), kéo từ cloud
+  if(!loadedSets.has(id) && (activeSet().cards||[]).length===0){
+    loadSetFromCloud(id).then(()=>{
+      // giữ vị trí nếu có thể
+      const cards = activeSet().cards;
+      currentId = cards.find(c=>c.id===prevId)?.id || cards[0]?.id || null;
+      flipped = wasFlipped;
+      renderCard(); renderList();
+    });
+  } else {
+    const cs = currentCards();
+    currentId = cs[0]?.id || null;
+    flipped = false; renderCard(); renderList();
+  }
   setSync('Đang ở: ' + (activeSet()?.name || ''), 'ok');
 }
 function prevCard(){
@@ -318,6 +307,7 @@ function deleteCurrent(){
   const idx = indexOfCurrent();
   if(idx < 0) return;
   cards.splice(idx, 1);
+  markSetDirty(activeSet().id);
   saveState();
   if(cards.length){
     const next = idx < cards.length ? idx : cards.length - 1;
@@ -331,6 +321,7 @@ function deleteCurrent(){
 function mark(isKnown){
   const c = currentCards().find(x=>x.id===currentId); if(!c) return;
   if(isKnown) c.known++; else c.unknown++; c.last = Date.now();
+  markSetDirty(activeSet().id);
   saveState(); nextCard();
 }
 async function enrichCardById(id, front){
@@ -341,6 +332,7 @@ async function enrichCardById(id, front){
     c.ipa = d.ipa || c.ipa;
     c.audio = d.audio || c.audio;
     c.example = d.example || c.example || '';
+    markSetDirty(activeSet().id);
     saveState();
     if(currentId === id) renderCard();
     renderList();
@@ -349,11 +341,10 @@ async function enrichCardById(id, front){
 }
 
 /* =================== Cloud Sync (JSONP, chung cho mọi người) =================== */
-/* GIỮ NGUYÊN */
-const API_URL   = 'https://script.google.com/macros/s/AKfycbwxNxcSug7Hn3HRKXWgdvi-SFc8Xbj53nS2u6YjimRfx2P2xhmjBLko2V7b0G7b-wCbMA/exec';
+/* GIỮ URL & TOKEN NGUYÊN NHƯ BẠN YÊU CẦU */
+const API_URL   = 'https://script.google.com/macros/s/AKfycbzNrbVwoaL4IHmtPldw44qdmCyMawDBGmTKM8t_4PPTiQyYj9rTYWywZ26fQq8H8jyevg/exec';
 const API_TOKEN = 'abcdefgh';
 
-/* JSONP helper */
 function jsonp(url, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
@@ -399,16 +390,6 @@ function compactState(st){
     sets: (st.sets||[]).map(s => ({ id:s.id, name:s.name, count:(s.cards||[]).length }))
   };
 }
-function buildStateFull(st){
-  return {
-    version: 4,
-    activeSetId: st.activeSetId,
-    sets: (st.sets||[]).map(s => ({
-      id: s.id, name: s.name,
-      cards: compactCards(s.cards||[])
-    }))
-  };
-}
 
 /* Sync UI & Debounce */
 function setSync(text, cls='work'){
@@ -422,12 +403,14 @@ function setDirty(){
   setSync('Thay đổi cục bộ — chờ đồng bộ…', 'work');
   schedulePush();
 }
+function markSetDirty(setId){ dirtySets.add(setId); setDirty(); }
 function schedulePush(delay=1500){
   clearTimeout(pushTimer);
   pushTimer = setTimeout(()=> cloudPush(true).catch(()=>{}), delay);
 }
 
-/* ============ PULL: đọc đủ mọi format, giữ vị trí hiện tại ============ */
+/* ======== PULL ======== */
+/* B1: lấy state chung; B2: tải thẻ của bộ active (lazy-load các bộ khác khi chọn) */
 async function cloudPull(silent=true){
   try{
     if(!silent) setSync('Đang tải từ cloud…','work');
@@ -439,207 +422,171 @@ async function cloudPull(silent=true){
 
     const url = `${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`;
     const j = await jsonp(url);
-    (window.__lastCloud = j); // lưu cho nút debug
+    (window.__lastCloud = j);
 
-    if(!j || !j.ok){ setSync('Cloud pull thất bại', 'err'); throw new Error('pull-failed'); }
+    if(!j || !j.ok || !j.state){ setSync('Cloud pull: dữ liệu không hợp lệ', 'err'); return false; }
 
-    if(!dirty){
-      let merged = false;
-
-      /* 1) stateFull: đủ sets + cards (compact) */
-      if (j.stateFull && Array.isArray(j.stateFull.sets)) {
-        const remote = j.stateFull;
-        state = { version:4, activeSetId: remote.activeSetId || prevActiveSetId, sets: [] };
-        state.sets = remote.sets.map(rs => ({
-          id: rs.id, name: rs.name || 'Bộ mới',
-          cards: expandCards(rs.cards || [])
-        }));
-        merged = true;
-      }
-
-      /* 2) cardsBySet (object setId -> cards compact) + state (metadata) */
-      if (!merged && j.cardsBySet && typeof j.cardsBySet === 'object') {
-        const remoteSets = (j.state && Array.isArray(j.state.sets)) ? j.state.sets : (state.sets||[]);
-        const map = j.cardsBySet;
-        state = {
-          version: 4,
-          activeSetId: (j.state?.activeSetId) || prevActiveSetId,
-          sets: remoteSets.map(s => ({
-            id:s.id, name:s.name || 'Bộ mới',
-            cards: expandCards(map[s.id] || [])
-          }))
-        };
-        merged = true;
-      }
-
-      /* 3) dataAll: [{id, cards}] mới thêm cho tương thích backend cũ */
-      if (!merged && Array.isArray(j.dataAll)) {
-        const remoteSets = (j.state && Array.isArray(j.state.sets)) ? j.state.sets : (state.sets||[]);
-        const byId = Object.fromEntries(j.dataAll.map(x => [x.id, expandCards(x.cards||[])]));
-        state = {
-          version: 4,
-          activeSetId: (j.state?.activeSetId) || prevActiveSetId,
-          sets: remoteSets.map(s => ({
-            id:s.id, name:s.name || 'Bộ mới',
-            cards: byId[s.id] || []
-          }))
-        };
-        merged = true;
-      }
-
-      /* 4) state.sets[*].cards (backend trả thẳng trong state) */
-      if (!merged && j.state && Array.isArray(j.state.sets) && j.state.sets.some(s=>Array.isArray(s.cards))) {
-        const remote = j.state;
-        state = { version:4, activeSetId: remote.activeSetId || prevActiveSetId, sets: [] };
-        state.sets = remote.sets.map(rs => ({
-          id: rs.id, name: rs.name || 'Bộ mới',
-          cards: Array.isArray(rs.cards) ? expandCards(rs.cards) : []
-        }));
-        merged = true;
-      }
-
-      /* 5) legacy: chỉ cards/data (áp vào bộ đang active) */
-      if (!merged && (Array.isArray(j.cards) || Array.isArray(j.data))) {
-        const s = activeSet();
-        if(s){ s.cards = Array.isArray(j.cards) ? expandCards(j.cards) : j.data; }
-        merged = true;
-      }
-
-      // Nếu vẫn chưa merged (rất hiếm) thì thôi chịu, giữ nguyên local.
-      // Phục hồi vị trí đang xem
-      if (merged) {
-        if(!state.activeSetId || !state.sets.find(x=>x.id===state.activeSetId)){
-          state.activeSetId = prevActiveSetId || state.sets[0]?.id;
-        }
-        const cardsNow = currentCards();
-        let keepId = prevId;
-        if (!cardsNow.find(c=>c.id===keepId)) {
-          const idx = Math.min(prevIndex, Math.max(0, cardsNow.length-1));
-          keepId = cardsNow[idx]?.id || cardsNow[0]?.id || null;
-        }
-        currentId = keepId;
-        flipped = wasFlipped;
-
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        renderSets(); renderCard(); renderList();
-        lastSync = Date.now();
-        setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
-      }
+    // Hợp nhất danh sách bộ theo server (id/name/count)
+    const remoteSets = Array.isArray(j.state.sets) ? j.state.sets : [];
+    const localById = Object.fromEntries((state.sets||[]).map(s=>[s.id,s]));
+    const mergedSets = remoteSets.map(s=>{
+      const old = localById[s.id];
+      return old ? { ...old, name: s.name || old.name } : { id:s.id, name:s.name||'Bộ mới', cards:[] };
+    });
+    state = { version:4, activeSetId: j.state.activeSetId || prevActiveSetId, sets: mergedSets };
+    if(!state.activeSetId || !state.sets.find(x=>x.id===state.activeSetId)){
+      state.activeSetId = state.sets[0]?.id;
     }
 
+    // Tải thẻ cho bộ active nếu rỗng
+    const act = activeSet();
+    if(act && (!act.cards || !act.cards.length)){
+      await loadSetFromCloud(act.id);
+    }
+
+    // Khôi phục vị trí
+    const cardsNow = currentCards();
+    let keepId = prevId;
+    if (!cardsNow.find(c=>c.id===keepId)) {
+      const idx = Math.min(prevIndex, Math.max(0, cardsNow.length-1));
+      keepId = cardsNow[idx]?.id || cardsNow[0]?.id || null;
+    }
+    currentId = keepId; flipped = wasFlipped;
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    renderSets(); renderCard(); renderList();
+    lastSync = Date.now();
+    setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
     return true;
-  }catch(e){ console.error(e); setSync('Cloud pull lỗi mạng', 'err'); throw e; }
+  }catch(e){ console.error(e); setSync('Cloud pull lỗi mạng', 'err'); return false; }
 }
 
-/* ============ PUSH: gửi đủ mọi format để backend lưu được toàn bộ ============ */
+/* Tải thẻ 1 bộ (lazy) qua op=getSet&setId=...; fallback: nếu server chưa có, để trống */
+async function loadSetFromCloud(setId){
+  try{
+    const url = `${API_URL}?op=getSet&token=${encodeURIComponent(API_TOKEN)}&setId=${encodeURIComponent(setId)}`;
+    const j = await jsonp(url);
+    if(j && j.ok && Array.isArray(j.cards)){
+      const target = state.sets.find(s=>s.id===setId);
+      if(target){ target.cards = expandCards(j.cards); }
+      loadedSets.add(setId);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      renderSets(); if(setId === state.activeSetId){ renderCard(); renderList(); }
+      return true;
+    }
+  }catch(_){}
+  // nếu không lấy được, giữ nguyên (server chưa hỗ trợ)
+  return false;
+}
+
+/* ======== PUSH ======== */
+/* Đẩy state gọn + đẩy các bộ bẩn (compact cards) */
 async function cloudPush(silent=false){
   try{
-    const compact = compactState(state);
-    const stateFull = buildStateFull(state);
-
-    const cardsBySet = {};
-    const dataAll = [];
-    for(const s of state.sets){
-      const packed = compactCards(s.cards || []);
-      cardsBySet[s.id] = packed;
-      dataAll.push({ id: s.id, cards: packed });
-    }
-    // legacy cho backend rất cũ: chỉ một bộ active
-    const legacyCards = compactCards(currentCards());
-
-    const payload = {
-      compact: true,
-      state: compact,
-      stateFull,
-      cardsBySet,
-      dataAll,
-      // legacy:
-      cards: legacyCards,
-      data: legacyCards
-    };
-    const dataB64 = b64webSafeFromJSON(payload);
-
-    if (dataB64.length > 7500) {
-      setSync('Dữ liệu lớn cho JSONP (tách bớt bộ / rút ngắn nội dung).', 'err');
-      throw new Error('payload-too-large');
-    }
-
     if(!silent) setSync('Đang đẩy lên cloud…','work');
-    const url = `${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${dataB64}`;
-    const j = await jsonp(url, 30000);
 
-    if(j && j.ok){
-      dirty = false;
-      lastSync = Date.now();
-      setSync('Đã đồng bộ (push) ' + hhmmss(new Date(lastSync)), 'ok');
-      return true;
-    } else {
-      setSync('Cloud push: server trả về không ok', 'err');
-      throw new Error('push-failed-server');
+    // 1) push state (nhỏ) — thử saveState, fallback saveAll
+    const st = compactState(state);
+    const stB64 = b64webSafeFromJSON({ state: st });
+    let okState = false;
+    try{
+      let u = `${API_URL}?op=saveState&token=${encodeURIComponent(API_TOKEN)}&data=${stB64}`;
+      const r = await jsonp(u, 20000); okState = !!(r && r.ok);
+    }catch(_){}
+    if(!okState){
+      // fallback: saveAll nhưng chỉ mang state
+      let u = `${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${stB64}`;
+      await jsonp(u, 20000).catch(()=>{});
     }
+
+    // 2) push từng bộ thay đổi qua saveSet
+    for(const setId of Array.from(dirtySets)){
+      const cards = (state.sets.find(s=>s.id===setId)?.cards)||[];
+      const packed = compactCards(cards);
+      const dataB64 = b64webSafeFromJSON({ setId, cards: packed });
+
+      if (dataB64.length > 7500) {
+        setSync(`Bộ "${(state.sets.find(s=>s.id===setId)||{}).name||setId}": URL JSONP quá dài. Hãy tách bộ hoặc rút ngắn nội dung.`, 'err');
+        continue; // đừng chặn các bộ khác
+      }
+
+      let url = `${API_URL}?op=saveSet&token=${encodeURIComponent(API_TOKEN)}&setId=${encodeURIComponent(setId)}&data=${dataB64}`;
+      const j = await jsonp(url, 30000);
+      if(!(j && j.ok)){ setSync(`Cloud push bộ "${(state.sets.find(s=>s.id===setId)||{}).name||setId}" thất bại.`, 'err'); }
+      else { dirtySets.delete(setId); }
+    }
+
+    // Nếu còn bộ bẩn → vẫn coi như còn dirty
+    dirty = dirtySets.size > 0;
+    lastSync = Date.now();
+    setSync(dirty ? 'Đã đẩy một phần — còn bộ chưa đẩy' : ('Đã đồng bộ (push) ' + hhmmss(new Date(lastSync))), dirty ? 'work' : 'ok');
+    return true;
   }catch(e){
     console.error('[push] error:', e);
-    if (String(e?.message).includes('payload-too-large')) {
-      setSync('Push thất bại: URL quá dài (JSONP).', 'err');
-    } else {
-      setSync('Cloud push lỗi mạng.', 'err');
-    }
-    throw e;
+    setSync('Cloud push lỗi mạng.', 'err');
+    return false;
   }
 }
 
 /* =================== Events =================== */
-el.setSelect.onchange = ()=> switchSet(el.setSelect.value);
-el.setAddBtn.onclick = ()=>{
+const elMap = el;
+elMap.setSelect.onchange = ()=> switchSet(elMap.setSelect.value);
+elMap.setAddBtn.onclick = ()=>{
   const name = prompt('Tên bộ thẻ mới:', 'Bộ thẻ mới');
   if(!name) return;
   const s = { id: uid('set_'), name: name.trim(), cards: [] };
   state.sets.unshift(s);
   state.activeSetId = s.id;
   currentId = null;
+  markSetDirty(s.id);
   saveState();
   renderSets(); renderCard(); renderList();
 };
-el.setRenameBtn.onclick = ()=>{
+elMap.setRenameBtn.onclick = ()=>{
   const s = activeSet(); if(!s) return;
   const name = prompt('Đổi tên bộ thẻ:', s.name);
   if(!name) return;
   s.name = name.trim();
-  saveState(); renderSets(); renderList();
+  saveState(); // state đổi → push state
+  setDirty();  // đánh dấu dirty chung (state)
+  renderSets(); renderList();
 };
-el.setDeleteBtn.onclick = ()=>{
+elMap.setDeleteBtn.onclick = ()=>{
   if(state.sets.length <= 1){ alert('Cần ít nhất 1 bộ thẻ. Không thể xoá.'); return; }
   const s = activeSet(); if(!s) return;
   if(!confirm(`Xoá bộ "${s.name}"?`)) return;
   state.sets = state.sets.filter(x => x.id !== s.id);
   state.activeSetId = state.sets[0].id;
   currentId = currentCards()[0]?.id || null;
-  saveState(); renderSets(); renderCard(); renderList();
+  saveState(); setDirty(); // đổi state
+  renderSets(); renderCard(); renderList();
 };
 
-el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
-el.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
-el.knownBtn.onclick = ()=> mark(true);
-el.unknownBtn.onclick = ()=> mark(false);
-el.prevBtn.onclick = prevCard;
-el.nextBtn.onclick = nextCard;
-el.deleteBtn.onclick = deleteCurrent;
-el.search.oninput = renderList;
+elMap.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
+elMap.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
+elMap.knownBtn.onclick = ()=> mark(true);
+elMap.unknownBtn.onclick = ()=> mark(false);
+elMap.prevBtn.onclick = prevCard;
+elMap.nextBtn.onclick = nextCard;
+elMap.deleteBtn.onclick = deleteCurrent;
+elMap.search.oninput = renderList;
 
-el.addBtn.onclick = ()=>{
-  const f = el.inFront.value.trim();
-  const b = el.inBack.value.trim();
+elMap.addBtn.onclick = ()=>{
+  const f = elMap.inFront.value.trim();
+  const b = elMap.inBack.value.trim();
   if(!f || !b) return;
+  const s = activeSet(); if(!s) return;
   const card = { id:uid('c_'), front:f, back:b, known:0, unknown:0, last:0, ipa:'', audio:'', example:'' };
-  currentCards().unshift(card);
-  saveState();
+  s.cards.unshift(card);
   currentId = card.id; flipped = false;
+  markSetDirty(s.id);
+  saveState();
   renderCard(); renderList(); enrichCardById(card.id, f);
-  el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML='';
+  elMap.inFront.value=''; elMap.inBack.value=''; elMap.frontHint.innerHTML='';
 };
-el.clearBtn.onclick = ()=>{ el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML=''; el.inFront.focus(); };
-el.inFront.onblur = previewEnrichFront;
-el.speakBtn.onclick = (e)=>{
+elMap.clearBtn.onclick = ()=>{ elMap.inFront.value=''; elMap.inBack.value=''; elMap.frontHint.innerHTML=''; elMap.inFront.focus(); };
+elMap.inFront.onblur = previewEnrichFront;
+elMap.speakBtn.onclick = (e)=>{
   e.stopPropagation();
   const c = currentCards().find(x=>x.id===currentId); if(!c) return;
   if(c.audio){ new Audio(c.audio).play(); }
@@ -657,34 +604,33 @@ window.addEventListener('keydown', (e)=>{
   else if(k === 'arrowleft'){ e.preventDefault(); prevCard(); }
   else if(k === 'arrowright'){ e.preventDefault(); nextCard(); }
   else if(k === 'delete'){ e.preventDefault(); deleteCurrent(); }
-  else if(k === 'n'){ el.inFront.focus(); }
+  else if(k === 'n'){ elMap.inFront.focus(); }
 });
 
-/* Gợi ý IPA khi rời ô "Mặt trước" */
+/* Gợi ý IPA */
 async function previewEnrichFront(){
-  const f = el.inFront.value.trim();
-  if(!f){ el.frontHint.innerHTML=''; return; }
-  el.loading.hidden = false;
+  const f = elMap.inFront.value.trim();
+  if(!f){ elMap.frontHint.innerHTML=''; return; }
+  elMap.loading.hidden = false;
   const d = await fetchDictionary(f);
-  el.frontHint.innerHTML = d.ipa ? `<small>IPA gợi ý: ${escapeHTML(d.ipa)}</small>` : '';
-  el.loading.hidden = true;
+  elMap.frontHint.innerHTML = d.ipa ? `<small>IPA gợi ý: ${escapeHTML(d.ipa)}</small>` : '';
+  elMap.loading.hidden = true;
 }
 
-/* Nút debug: hiện JSON cloud */
-el.debugBtn.onclick = async ()=>{
+/* Nút debug: xem JSON cloud */
+elMap.debugBtn.onclick = async ()=>{
   try{
     const j = window.__lastCloud || await jsonp(`${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`);
-    el.debugBox.style.display = el.debugBox.style.display==='none' ? 'block' : 'none';
-    el.debugBox.textContent = JSON.stringify(j, null, 2);
+    elMap.debugBox.style.display = elMap.debugBox.style.display==='none' ? 'block' : 'none';
+    elMap.debugBox.textContent = JSON.stringify(j, null, 2);
   }catch(e){
-    el.debugBox.style.display = 'block';
-    el.debugBox.textContent = 'Không lấy được JSON cloud: ' + e;
+    elMap.debugBox.style.display = 'block';
+    elMap.debugBox.textContent = 'Không lấy được JSON cloud: ' + e;
   }
 };
 
-/* =================== Khởi động + Auto Sync =================== */
+/* =================== Auto Sync =================== */
 function renderAll(){ renderSets(); renderCard(); renderList(); }
-
 (async function init(){
   renderAll();
   setSync('Đang tải dữ liệu…','work');
