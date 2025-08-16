@@ -114,7 +114,7 @@
 </main>
 
 <footer>
-  © Ver 1.1 — Lưu tự động trong trình duyệt • Có IPA & phát âm • Đồng bộ nhiều người dùng
+  © Ver 1.2 — Lưu tự động trong trình duyệt • Có IPA & phát âm • Đồng bộ nhiều người dùng
 </footer>
 
 <!-- Badge trạng thái đồng bộ -->
@@ -149,7 +149,7 @@ function loadInitialState(){
       }
     }
   }catch(_){}
-  // Migration từ v3: nếu có cards cũ thì chuyển thành 1 bộ
+  // Migration từ v3
   const oldKey = 'flashcards_v3_plain';
   let migratedCards = [];
   try{
@@ -244,7 +244,7 @@ async function fetchDictionary(term){
   }
 }
 
-/* =================== Render Sets =================== */
+/* =================== Render Sets & Cards =================== */
 function renderSets(){
   el.setSelect.innerHTML = '';
   state.sets.forEach(s=>{
@@ -264,8 +264,6 @@ function switchSet(id){
   renderSets(); renderCard(); renderList();
   setSync('Đang ở: ' + (activeSet()?.name || ''), 'ok');
 }
-
-/* =================== Render Cards =================== */
 function buildBackHTML(back, example){
   if(example){ return `${escapeHTML(back)}\n\n${wrapSmall('Ví dụ: ' + example)}`; }
   return escapeHTML(back);
@@ -385,9 +383,9 @@ function b64webSafeFromJSON(obj){
   return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
 
-/* ===== Gói gọn khi push để đồng bộ TOÀN BỘ BỘ THẺ ===== */
+/* ===== Compact hóa ===== */
 function compactCards(cards){
-  return cards.map(c => [
+  return (cards||[]).map(c => [
     c.id || '',
     c.front || '',
     c.back || '',
@@ -413,6 +411,16 @@ function compactState(st){
     version: 4,
     activeSetId: st.activeSetId,
     sets: (st.sets||[]).map(s => ({ id:s.id, name:s.name, count:(s.cards||[]).length }))
+  };
+}
+function buildStateFull(st){
+  return {
+    version: 4,
+    activeSetId: st.activeSetId,
+    sets: (st.sets||[]).map(s => ({
+      id: s.id, name: s.name,
+      cards: compactCards(s.cards||[])
+    }))
   };
 }
 
@@ -449,8 +457,26 @@ async function cloudPull(silent=true){
     if(!j || !j.ok){ setSync('Cloud pull thất bại', 'err'); throw new Error('pull-failed'); }
 
     if(!dirty){
-      // 1) Hợp nhất danh sách bộ
-      if(j.state){
+      /* ---- ƯU TIÊN 1: stateFull (mới) ---- */
+      if (j.stateFull && Array.isArray(j.stateFull.sets)) {
+        const remote = j.stateFull;
+        state = { version:4, activeSetId: remote.activeSetId || prevActiveSetId, sets: [] };
+        state.sets = remote.sets.map(rs => ({
+          id: rs.id, name: rs.name || 'Bộ mới',
+          cards: expandCards(rs.cards || [])
+        }));
+      }
+      /* ---- ƯU TIÊN 2: state.sets[*].cards (backend cũ của bạn) ---- */
+      else if (j.state && Array.isArray(j.state.sets) && j.state.sets.some(s=>Array.isArray(s.cards))) {
+        const remote = j.state;
+        state = { version:4, activeSetId: remote.activeSetId || prevActiveSetId, sets: [] };
+        state.sets = remote.sets.map(rs => ({
+          id: rs.id, name: rs.name || 'Bộ mới',
+          cards: Array.isArray(rs.cards) ? expandCards(rs.cards) : []
+        }));
+      }
+      /* ---- ƯU TIÊN 3: chỉ danh sách bộ, thẻ nằm riêng ---- */
+      else if (j.state) {
         const remoteSets = Array.isArray(j.state.sets) ? j.state.sets : [];
         const localById = Object.fromEntries((state.sets||[]).map(s=>[s.id,s]));
         const mergedSets = remoteSets.map(s=>{
@@ -465,22 +491,26 @@ async function cloudPull(silent=true){
           activeSetId: mergedSets.find(x=>x.id===prevActiveSetId) ? prevActiveSetId : (j.state.activeSetId || mergedSets[0]?.id),
           sets: mergedSets
         };
-      }
 
-      // 2) Nạp thẻ: ưu tiên j.cardsBySet (mới) → j.cards (cũ, chỉ 1 bộ) → j.data (cũ)
-      if (j.cardsBySet && typeof j.cardsBySet === 'object'){
-        for(const setId in j.cardsBySet){
-          const s = state.sets.find(x=>x.id===setId);
-          if(s){ s.cards = expandCards(j.cardsBySet[setId]); }
+        // cardsBySet / cards / data
+        if (j.cardsBySet && typeof j.cardsBySet === 'object'){
+          for(const setId in j.cardsBySet){
+            const s = state.sets.find(x=>x.id===setId);
+            if(s){ s.cards = expandCards(j.cardsBySet[setId]); }
+          }
+        } else if (Array.isArray(j.cards)) {
+          const s = activeSet(); if(s){ s.cards = expandCards(j.cards); }
+        } else if (Array.isArray(j.data)) {
+          const s = activeSet(); if(s){ s.cards = j.data; }
         }
-      } else if (Array.isArray(j.cards)) {
-        // legacy: coi như dành cho active
-        const s = activeSet(); if(s){ s.cards = expandCards(j.cards); }
-      } else if (Array.isArray(j.data)) {
-        const s = activeSet(); if(s){ s.cards = j.data; }
+      }
+      /* ---- ƯU TIÊN 4: chỉ cards (rất cũ) ---- */
+      else if (Array.isArray(j.cards) || Array.isArray(j.data)) {
+        const s = activeSet();
+        if(s){ s.cards = Array.isArray(j.cards) ? expandCards(j.cards) : j.data; }
       }
 
-      // 3) Phục hồi thẻ đang xem
+      // Phục hồi thẻ đang xem
       const cardsNow = currentCards();
       let keepId = prevId;
       if (!cardsNow.find(c=>c.id===keepId)) {
@@ -502,18 +532,24 @@ async function cloudPull(silent=true){
 
 async function cloudPush(silent=false){
   try{
-    // Gửi TOÀN BỘ bộ thẻ
+    // Gửi TOÀN BỘ bộ thẻ theo 2 dạng để backend cũ/mới đều hiểu:
+    // - stateFull: sets[*].cards đã compact
+    // - state (gọn): chỉ metadata (phòng khi backend ghi đè)
+    // - (tùy chọn) cardsBySet để tương thích thêm
     const compact = compactState(state);
+    const stateFull = buildStateFull(state);
+
     const cardsBySet = {};
     for(const s of state.sets){
       cardsBySet[s.id] = compactCards(s.cards || []);
     }
-    const payload = { compact:true, state: compact, cardsBySet };
+
+    const payload = { compact:true, state: compact, stateFull, cardsBySet };
     const dataB64 = b64webSafeFromJSON(payload);
 
-    // Giới hạn an toàn cho JSONP (URL):  ~7.5k ký tự dữ liệu
+    // Giới hạn an toàn cho JSONP (URL)
     if (dataB64.length > 7500) {
-      setSync('Dữ liệu lớn cho JSONP (tách bộ hoặc rút ngắn nội dung).', 'err');
+      setSync('Dữ liệu lớn cho JSONP (tách bớt bộ / rút ngắn nội dung).', 'err');
       throw new Error('payload-too-large');
     }
 
