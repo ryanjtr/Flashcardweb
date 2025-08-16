@@ -114,7 +114,7 @@
 </main>
 
 <footer>
-  © 2025 — Lưu tự động trong trình duyệt • Có IPA & phát âm • Đồng bộ nhiều người dùng
+  © Ver 1.1 — Lưu tự động trong trình duyệt • Có IPA & phát âm • Đồng bộ nhiều người dùng
 </footer>
 
 <!-- Badge trạng thái đồng bộ -->
@@ -385,7 +385,7 @@ function b64webSafeFromJSON(obj){
   return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
 
-/* ===== Compact hóa khi push để tránh URL dài ===== */
+/* ===== Gói gọn khi push để đồng bộ TOÀN BỘ BỘ THẺ ===== */
 function compactCards(cards){
   return cards.map(c => [
     c.id || '',
@@ -397,16 +397,16 @@ function compactCards(cards){
     Number(c.last)||0
   ]);
 }
-function expandCards(compactArr){
-  if (!Array.isArray(compactArr)) return [];
-  if (compactArr.length && Array.isArray(compactArr[0])) {
-    return compactArr.map(a => ({
+function expandCards(arr){
+  if (!Array.isArray(arr)) return [];
+  if (arr.length && Array.isArray(arr[0])) {
+    return arr.map(a => ({
       id:a[0], front:a[1], back:a[2], ipa:a[3],
       known:Number(a[4])||0, unknown:Number(a[5])||0, last:Number(a[6])||0,
       audio:'', example:''
     }));
   }
-  return compactArr;
+  return arr;
 }
 function compactState(st){
   return {
@@ -433,14 +433,13 @@ function schedulePush(delay=1500){
   pushTimer = setTimeout(()=> cloudPush(true).catch(()=>{}), delay);
 }
 
-/* =================== Cloud: Pull/Push (giữ nguyên lựa chọn) =================== */
+/* =================== Cloud: Pull/Push (đa bộ, giữ vị trí) =================== */
 async function cloudPull(silent=true){
   try{
     if(!silent) setSync('Đang tải từ cloud…','work');
 
-    // Ghi nhớ trước khi cập nhật
+    // Ghi nhớ lựa chọn hiện tại để không “nhảy về đầu”
     const prevActiveSetId = state.activeSetId;
-    const prevCardsSnapshot = currentCards().slice();
     const prevIndex = Math.max(0, indexOfCurrent());
     const prevId = currentId;
     const wasFlipped = flipped;
@@ -450,7 +449,7 @@ async function cloudPull(silent=true){
     if(!j || !j.ok){ setSync('Cloud pull thất bại', 'err'); throw new Error('pull-failed'); }
 
     if(!dirty){
-      // ======= Merge sets (không đổi bộ đang chọn nếu còn tồn tại) =======
+      // 1) Hợp nhất danh sách bộ
       if(j.state){
         const remoteSets = Array.isArray(j.state.sets) ? j.state.sets : [];
         const localById = Object.fromEntries((state.sets||[]).map(s=>[s.id,s]));
@@ -461,30 +460,27 @@ async function cloudPull(silent=true){
         for(const s of state.sets||[]){
           if(!mergedSets.find(x=>x.id===s.id)) mergedSets.push(s);
         }
-        // Giữ active set cũ nếu còn tồn tại
-        const prefer = prevActiveSetId;
         state = {
           version: 4,
-          activeSetId: mergedSets.find(x=>x.id===prefer) ? prefer : (j.state.activeSetId || mergedSets[0]?.id),
+          activeSetId: mergedSets.find(x=>x.id===prevActiveSetId) ? prevActiveSetId : (j.state.activeSetId || mergedSets[0]?.id),
           sets: mergedSets
         };
       }
 
-      // ======= Cập nhật cards cho bộ đang active, nhưng giữ vị trí =======
-      if (Array.isArray(j.cards)) {
-        const expanded = expandCards(j.cards);
-        const s = activeSet();
-        if(s){
-          s.cards = expanded;
+      // 2) Nạp thẻ: ưu tiên j.cardsBySet (mới) → j.cards (cũ, chỉ 1 bộ) → j.data (cũ)
+      if (j.cardsBySet && typeof j.cardsBySet === 'object'){
+        for(const setId in j.cardsBySet){
+          const s = state.sets.find(x=>x.id===setId);
+          if(s){ s.cards = expandCards(j.cardsBySet[setId]); }
         }
+      } else if (Array.isArray(j.cards)) {
+        // legacy: coi như dành cho active
+        const s = activeSet(); if(s){ s.cards = expandCards(j.cards); }
       } else if (Array.isArray(j.data)) {
-        const s = activeSet();
-        if(s){
-          s.cards = j.data;
-        }
+        const s = activeSet(); if(s){ s.cards = j.data; }
       }
 
-      // Khôi phục lựa chọn thẻ
+      // 3) Phục hồi thẻ đang xem
       const cardsNow = currentCards();
       let keepId = prevId;
       if (!cardsNow.find(c=>c.id===keepId)) {
@@ -492,7 +488,7 @@ async function cloudPull(silent=true){
         keepId = cardsNow[idx]?.id || cardsNow[0]?.id || null;
       }
       currentId = keepId;
-      flipped = wasFlipped; // giữ trạng thái lật
+      flipped = wasFlipped;
 
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); // lưu nhưng KHÔNG setDirty
       renderSets(); renderCard(); renderList();
@@ -506,14 +502,18 @@ async function cloudPull(silent=true){
 
 async function cloudPush(silent=false){
   try{
+    // Gửi TOÀN BỘ bộ thẻ
     const compact = compactState(state);
-    const cardsPacked = compactCards(currentCards()); // đẩy bộ đang active
-
-    const payload = { compact:true, state: compact, cards: cardsPacked };
+    const cardsBySet = {};
+    for(const s of state.sets){
+      cardsBySet[s.id] = compactCards(s.cards || []);
+    }
+    const payload = { compact:true, state: compact, cardsBySet };
     const dataB64 = b64webSafeFromJSON(payload);
 
+    // Giới hạn an toàn cho JSONP (URL):  ~7.5k ký tự dữ liệu
     if (dataB64.length > 7500) {
-      setSync('Dữ liệu lớn cho JSONP (hãy tách nhỏ/thẻ ngắn bớt).', 'err');
+      setSync('Dữ liệu lớn cho JSONP (tách bộ hoặc rút ngắn nội dung).', 'err');
       throw new Error('payload-too-large');
     }
 
