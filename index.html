@@ -39,7 +39,6 @@
   #syncStatus.ok { border-color:rgba(16,185,129,.45) }
   #syncStatus.work { border-color:rgba(56,189,248,.45) }
   #syncStatus.err { border-color:rgba(244,63,94,.55) }
-  #debugBox{white-space:pre-wrap; max-height:300px; overflow:auto; background:rgba(0,0,0,.35); padding:8px; border-radius:8px; display:none; margin-top:8px}
 </style>
 </head>
 <body>
@@ -51,15 +50,14 @@
 
 <main>
   <section class="col panel" style="display:flex;flex-direction:column;gap:12px;">
+
     <div class="panel">
       <div class="row">
         <select id="setSelect" title="Chọn bộ thẻ" style="flex:1 1 220px;"></select>
         <button id="setAddBtn" class="btn">+ Bộ thẻ</button>
         <button id="setRenameBtn" class="btn">Đổi tên</button>
         <button id="setDeleteBtn" class="btn">Xóa bộ</button>
-        <button id="debugBtn" class="btn" title="Xem JSON cloud">📦</button>
       </div>
-      <div id="debugBox"></div>
     </div>
 
     <div class="row">
@@ -109,7 +107,7 @@
 </main>
 
 <footer>
-  © Ver 1.4 — Lưu tự động • IPA & phát âm • Đồng bộ nhiều người dùng
+  © Ver 1.5 — Lưu tự động • IPA & phát âm • Đồng bộ nhiều người dùng (Google Sheets)
 </footer>
 
 <div id="syncStatus" class="work">Đang khởi tạo…</div>
@@ -118,9 +116,7 @@
 /* =================== State tổng (nhiều bộ thẻ) =================== */
 const STORAGE_KEY = 'flashcards_v4_sets';
 let state = loadInitialState();
-/*
- state = { version:4, activeSetId, sets:[{id,name,cards:[...]}] }
-*/
+/* state = { version:4, activeSetId, sets:[{id,name,cards:[...]}] } */
 function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); setDirty(); }
 function loadInitialState(){
   try{
@@ -160,19 +156,12 @@ let flipped = false;
 let dirty = false;
 let lastSync = 0;
 let pushTimer = null;
-/* Bộ nào bẩn thì chỉ push bộ đó */
-const dirtySets = new Set();
-/* Cache đánh dấu đã từng load thẻ bộ nào từ cloud */
-const loadedSets = new Set();
 
 const el = {
   setSelect: document.getElementById('setSelect'),
   setAddBtn: document.getElementById('setAddBtn'),
   setRenameBtn: document.getElementById('setRenameBtn'),
   setDeleteBtn: document.getElementById('setDeleteBtn'),
-  debugBtn: document.getElementById('debugBtn'),
-  debugBox: document.getElementById('debugBox'),
-
   search: document.getElementById('search'),
   card: document.getElementById('card'),
   cardContent: document.getElementById('cardContent'),
@@ -272,20 +261,10 @@ function switchSet(id){
   state.activeSetId = id;
   saveState();
   renderSets();
-  // Nếu bộ này chưa có thẻ (và chưa load từ cloud), kéo từ cloud
-  if(!loadedSets.has(id) && (activeSet().cards||[]).length===0){
-    loadSetFromCloud(id).then(()=>{
-      // giữ vị trí nếu có thể
-      const cards = activeSet().cards;
-      currentId = cards.find(c=>c.id===prevId)?.id || cards[0]?.id || null;
-      flipped = wasFlipped;
-      renderCard(); renderList();
-    });
-  } else {
-    const cs = currentCards();
-    currentId = cs[0]?.id || null;
-    flipped = false; renderCard(); renderList();
-  }
+  const cs = currentCards();
+  currentId = cs.find(c=>c.id===prevId)?.id || cs[0]?.id || null;
+  flipped = wasFlipped;
+  renderCard(); renderList();
   setSync('Đang ở: ' + (activeSet()?.name || ''), 'ok');
 }
 function prevCard(){
@@ -307,7 +286,6 @@ function deleteCurrent(){
   const idx = indexOfCurrent();
   if(idx < 0) return;
   cards.splice(idx, 1);
-  markSetDirty(activeSet().id);
   saveState();
   if(cards.length){
     const next = idx < cards.length ? idx : cards.length - 1;
@@ -321,7 +299,6 @@ function deleteCurrent(){
 function mark(isKnown){
   const c = currentCards().find(x=>x.id===currentId); if(!c) return;
   if(isKnown) c.known++; else c.unknown++; c.last = Date.now();
-  markSetDirty(activeSet().id);
   saveState(); nextCard();
 }
 async function enrichCardById(id, front){
@@ -332,7 +309,6 @@ async function enrichCardById(id, front){
     c.ipa = d.ipa || c.ipa;
     c.audio = d.audio || c.audio;
     c.example = d.example || c.example || '';
-    markSetDirty(activeSet().id);
     saveState();
     if(currentId === id) renderCard();
     renderList();
@@ -340,12 +316,12 @@ async function enrichCardById(id, front){
   el.loading.hidden = true;
 }
 
-/* =================== Cloud Sync (JSONP, chung cho mọi người) =================== */
-/* GIỮ URL & TOKEN NGUYÊN NHƯ BẠN YÊU CẦU */
-const API_URL   = 'https://script.google.com/macros/s/AKfycbzNrbVwoaL4IHmtPldw44qdmCyMawDBGmTKM8t_4PPTiQyYj9rTYWywZ26fQq8H8jyevg/exec';
+/* =================== Cloud Sync (JSONP, Google Sheets) =================== */
+/* Dùng URL bạn vừa deploy */
+const API_URL   = 'https://script.google.com/macros/s/AKfycbygOooRXLQA8GiOb1IziA-RUf3hXJv4pnClSFOvv11omfnCzVsTPWbq8aG45znyfG47NA/exec';
 const API_TOKEN = 'abcdefgh';
 
-function jsonp(url, timeoutMs = 12000) {
+function jsonp(url, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
     const finalUrl = url + (url.includes('?') ? '&' : '?') + 'callback=' + cbName;
@@ -391,7 +367,7 @@ function compactState(st){
   };
 }
 
-/* Sync UI & Debounce */
+/* Sync UI */
 function setSync(text, cls='work'){
   el.sync.className = cls ? cls.replace(/^/,'') : '';
   el.sync.classList.add(cls);
@@ -403,18 +379,17 @@ function setDirty(){
   setSync('Thay đổi cục bộ — chờ đồng bộ…', 'work');
   schedulePush();
 }
-function markSetDirty(setId){ dirtySets.add(setId); setDirty(); }
 function schedulePush(delay=1500){
   clearTimeout(pushTimer);
   pushTimer = setTimeout(()=> cloudPush(true).catch(()=>{}), delay);
 }
 
-/* ======== PULL ======== */
-/* B1: lấy state chung; B2: tải thẻ của bộ active (lazy-load các bộ khác khi chọn) */
+/* ======== PULL (get toàn bộ) ======== */
 async function cloudPull(silent=true){
   try{
     if(!silent) setSync('Đang tải từ cloud…','work');
 
+    // ghi nhớ vị trí để không nhảy về đầu
     const prevActiveSetId = state.activeSetId;
     const prevIndex = Math.max(0, indexOfCurrent());
     const prevId = currentId;
@@ -422,38 +397,34 @@ async function cloudPull(silent=true){
 
     const url = `${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`;
     const j = await jsonp(url);
-    (window.__lastCloud = j);
 
     if(!j || !j.ok || !j.state){ setSync('Cloud pull: dữ liệu không hợp lệ', 'err'); return false; }
 
-    // Hợp nhất danh sách bộ theo server (id/name/count)
+    // dựng state + gán cards từ cardsBySet
     const remoteSets = Array.isArray(j.state.sets) ? j.state.sets : [];
-    const localById = Object.fromEntries((state.sets||[]).map(s=>[s.id,s]));
-    const mergedSets = remoteSets.map(s=>{
-      const old = localById[s.id];
-      return old ? { ...old, name: s.name || old.name } : { id:s.id, name:s.name||'Bộ mới', cards:[] };
+    // map id -> cards
+    const cardsBySet = (j.cardsBySet && typeof j.cardsBySet === 'object') ? j.cardsBySet : {};
+    const newSets = remoteSets.map(s=>{
+      const compact = cardsBySet[s.id] || [];
+      return { id:s.id, name:s.name||'Bộ mới', cards: expandCards(compact) };
     });
-    state = { version:4, activeSetId: j.state.activeSetId || prevActiveSetId, sets: mergedSets };
+
+    state = { version:4, activeSetId: j.state.activeSetId || prevActiveSetId, sets:newSets };
     if(!state.activeSetId || !state.sets.find(x=>x.id===state.activeSetId)){
       state.activeSetId = state.sets[0]?.id;
     }
 
-    // Tải thẻ cho bộ active nếu rỗng
-    const act = activeSet();
-    if(act && (!act.cards || !act.cards.length)){
-      await loadSetFromCloud(act.id);
-    }
-
-    // Khôi phục vị trí
+    // phục hồi vị trí
     const cardsNow = currentCards();
     let keepId = prevId;
     if (!cardsNow.find(c=>c.id===keepId)) {
       const idx = Math.min(prevIndex, Math.max(0, cardsNow.length-1));
       keepId = cardsNow[idx]?.id || cardsNow[0]?.id || null;
     }
-    currentId = keepId; flipped = wasFlipped;
+    currentId = keepId;
+    flipped = wasFlipped;
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); // lưu nhưng không setDirty
     renderSets(); renderCard(); renderList();
     lastSync = Date.now();
     setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
@@ -461,65 +432,46 @@ async function cloudPull(silent=true){
   }catch(e){ console.error(e); setSync('Cloud pull lỗi mạng', 'err'); return false; }
 }
 
-/* Tải thẻ 1 bộ (lazy) qua op=getSet&setId=...; fallback: nếu server chưa có, để trống */
-async function loadSetFromCloud(setId){
-  try{
-    const url = `${API_URL}?op=getSet&token=${encodeURIComponent(API_TOKEN)}&setId=${encodeURIComponent(setId)}`;
-    const j = await jsonp(url);
-    if(j && j.ok && Array.isArray(j.cards)){
-      const target = state.sets.find(s=>s.id===setId);
-      if(target){ target.cards = expandCards(j.cards); }
-      loadedSets.add(setId);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      renderSets(); if(setId === state.activeSetId){ renderCard(); renderList(); }
-      return true;
-    }
-  }catch(_){}
-  // nếu không lấy được, giữ nguyên (server chưa hỗ trợ)
-  return false;
-}
-
-/* ======== PUSH ======== */
-/* Đẩy state gọn + đẩy các bộ bẩn (compact cards) */
+/* ======== PUSH (saveAll; tự chia nhỏ nếu URL dài) ======== */
 async function cloudPush(silent=false){
   try{
     if(!silent) setSync('Đang đẩy lên cloud…','work');
 
-    // 1) push state (nhỏ) — thử saveState, fallback saveAll
-    const st = compactState(state);
-    const stB64 = b64webSafeFromJSON({ state: st });
-    let okState = false;
-    try{
-      let u = `${API_URL}?op=saveState&token=${encodeURIComponent(API_TOKEN)}&data=${stB64}`;
-      const r = await jsonp(u, 20000); okState = !!(r && r.ok);
-    }catch(_){}
-    if(!okState){
-      // fallback: saveAll nhưng chỉ mang state
-      let u = `${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${stB64}`;
-      await jsonp(u, 20000).catch(()=>{});
+    const compact = compactState(state);
+
+    // Gói tất cả bộ một lần
+    const allCardsBySet = {};
+    for(const s of state.sets){
+      allCardsBySet[s.id] = compactCards(s.cards||[]);
     }
+    let payload = { compact:true, state: compact, cardsBySet: allCardsBySet };
+    let dataB64 = b64webSafeFromJSON(payload);
 
-    // 2) push từng bộ thay đổi qua saveSet
-    for(const setId of Array.from(dirtySets)){
-      const cards = (state.sets.find(s=>s.id===setId)?.cards)||[];
-      const packed = compactCards(cards);
-      const dataB64 = b64webSafeFromJSON({ setId, cards: packed });
+    // Nếu quá dài → gửi state trước (trống cards), rồi chia nhỏ theo từng bộ
+    if (dataB64.length > 7500) {
+      // 1) gửi state không kèm cards
+      let onlyStateB64 = b64webSafeFromJSON({ compact:true, state: compact, cardsBySet: {} });
+      await jsonp(`${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${onlyStateB64}`, 30000);
 
-      if (dataB64.length > 7500) {
-        setSync(`Bộ "${(state.sets.find(s=>s.id===setId)||{}).name||setId}": URL JSONP quá dài. Hãy tách bộ hoặc rút ngắn nội dung.`, 'err');
-        continue; // đừng chặn các bộ khác
+      // 2) gửi từng bộ
+      for(const s of state.sets){
+        const one = { compact:true, state: compact, cardsBySet: { [s.id]: allCardsBySet[s.id] } };
+        const partB64 = b64webSafeFromJSON(one);
+        if (partB64.length > 7500) {
+          setSync(`Bộ "${s.name}": URL JSONP quá dài. Hãy tách bộ hoặc rút ngắn nội dung.`, 'err');
+          // bỏ qua bộ quá dài để không chặn các bộ khác
+          continue;
+        }
+        await jsonp(`${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${partB64}`, 30000);
       }
-
-      let url = `${API_URL}?op=saveSet&token=${encodeURIComponent(API_TOKEN)}&setId=${encodeURIComponent(setId)}&data=${dataB64}`;
-      const j = await jsonp(url, 30000);
-      if(!(j && j.ok)){ setSync(`Cloud push bộ "${(state.sets.find(s=>s.id===setId)||{}).name||setId}" thất bại.`, 'err'); }
-      else { dirtySets.delete(setId); }
+    } else {
+      // Dài vừa phải → gửi một lần
+      await jsonp(`${API_URL}?op=saveAll&token=${encodeURIComponent(API_TOKEN)}&data=${dataB64}`, 30000);
     }
 
-    // Nếu còn bộ bẩn → vẫn coi như còn dirty
-    dirty = dirtySets.size > 0;
+    dirty = false;
     lastSync = Date.now();
-    setSync(dirty ? 'Đã đẩy một phần — còn bộ chưa đẩy' : ('Đã đồng bộ (push) ' + hhmmss(new Date(lastSync))), dirty ? 'work' : 'ok');
+    setSync('Đã đồng bộ (push) ' + hhmmss(new Date(lastSync)), 'ok');
     return true;
   }catch(e){
     console.error('[push] error:', e);
@@ -529,64 +481,58 @@ async function cloudPush(silent=false){
 }
 
 /* =================== Events =================== */
-const elMap = el;
-elMap.setSelect.onchange = ()=> switchSet(elMap.setSelect.value);
-elMap.setAddBtn.onclick = ()=>{
+el.setSelect.onchange = ()=> switchSet(el.setSelect.value);
+el.setAddBtn.onclick = ()=>{
   const name = prompt('Tên bộ thẻ mới:', 'Bộ thẻ mới');
   if(!name) return;
   const s = { id: uid('set_'), name: name.trim(), cards: [] };
   state.sets.unshift(s);
   state.activeSetId = s.id;
   currentId = null;
-  markSetDirty(s.id);
   saveState();
   renderSets(); renderCard(); renderList();
 };
-elMap.setRenameBtn.onclick = ()=>{
+el.setRenameBtn.onclick = ()=>{
   const s = activeSet(); if(!s) return;
   const name = prompt('Đổi tên bộ thẻ:', s.name);
   if(!name) return;
   s.name = name.trim();
-  saveState(); // state đổi → push state
-  setDirty();  // đánh dấu dirty chung (state)
-  renderSets(); renderList();
+  saveState(); renderSets(); renderList();
 };
-elMap.setDeleteBtn.onclick = ()=>{
+el.setDeleteBtn.onclick = ()=>{
   if(state.sets.length <= 1){ alert('Cần ít nhất 1 bộ thẻ. Không thể xoá.'); return; }
   const s = activeSet(); if(!s) return;
   if(!confirm(`Xoá bộ "${s.name}"?`)) return;
   state.sets = state.sets.filter(x => x.id !== s.id);
   state.activeSetId = state.sets[0].id;
   currentId = currentCards()[0]?.id || null;
-  saveState(); setDirty(); // đổi state
-  renderSets(); renderCard(); renderList();
+  saveState(); renderSets(); renderCard(); renderList();
 };
 
-elMap.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
-elMap.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
-elMap.knownBtn.onclick = ()=> mark(true);
-elMap.unknownBtn.onclick = ()=> mark(false);
-elMap.prevBtn.onclick = prevCard;
-elMap.nextBtn.onclick = nextCard;
-elMap.deleteBtn.onclick = deleteCurrent;
-elMap.search.oninput = renderList;
+el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
+el.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
+el.knownBtn.onclick = ()=> mark(true);
+el.unknownBtn.onclick = ()=> mark(false);
+el.prevBtn.onclick = prevCard;
+el.nextBtn.onclick = nextCard;
+el.deleteBtn.onclick = deleteCurrent;
+el.search.oninput = renderList;
 
-elMap.addBtn.onclick = ()=>{
-  const f = elMap.inFront.value.trim();
-  const b = elMap.inBack.value.trim();
+el.addBtn.onclick = ()=>{
+  const f = el.inFront.value.trim();
+  const b = el.inBack.value.trim();
   if(!f || !b) return;
   const s = activeSet(); if(!s) return;
   const card = { id:uid('c_'), front:f, back:b, known:0, unknown:0, last:0, ipa:'', audio:'', example:'' };
   s.cards.unshift(card);
   currentId = card.id; flipped = false;
-  markSetDirty(s.id);
   saveState();
   renderCard(); renderList(); enrichCardById(card.id, f);
-  elMap.inFront.value=''; elMap.inBack.value=''; elMap.frontHint.innerHTML='';
+  el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML='';
 };
-elMap.clearBtn.onclick = ()=>{ elMap.inFront.value=''; elMap.inBack.value=''; elMap.frontHint.innerHTML=''; elMap.inFront.focus(); };
-elMap.inFront.onblur = previewEnrichFront;
-elMap.speakBtn.onclick = (e)=>{
+el.clearBtn.onclick = ()=>{ el.inFront.value=''; el.inBack.value=''; el.frontHint.innerHTML=''; el.inFront.focus(); };
+el.inFront.onblur = previewEnrichFront;
+el.speakBtn.onclick = (e)=>{
   e.stopPropagation();
   const c = currentCards().find(x=>x.id===currentId); if(!c) return;
   if(c.audio){ new Audio(c.audio).play(); }
@@ -604,30 +550,18 @@ window.addEventListener('keydown', (e)=>{
   else if(k === 'arrowleft'){ e.preventDefault(); prevCard(); }
   else if(k === 'arrowright'){ e.preventDefault(); nextCard(); }
   else if(k === 'delete'){ e.preventDefault(); deleteCurrent(); }
-  else if(k === 'n'){ elMap.inFront.focus(); }
+  else if(k === 'n'){ el.inFront.focus(); }
 });
 
 /* Gợi ý IPA */
 async function previewEnrichFront(){
-  const f = elMap.inFront.value.trim();
-  if(!f){ elMap.frontHint.innerHTML=''; return; }
-  elMap.loading.hidden = false;
+  const f = el.inFront.value.trim();
+  if(!f){ el.frontHint.innerHTML=''; return; }
+  el.loading.hidden = false;
   const d = await fetchDictionary(f);
-  elMap.frontHint.innerHTML = d.ipa ? `<small>IPA gợi ý: ${escapeHTML(d.ipa)}</small>` : '';
-  elMap.loading.hidden = true;
+  el.frontHint.innerHTML = d.ipa ? `<small>IPA gợi ý: ${escapeHTML(d.ipa)}</small>` : '';
+  el.loading.hidden = true;
 }
-
-/* Nút debug: xem JSON cloud */
-elMap.debugBtn.onclick = async ()=>{
-  try{
-    const j = window.__lastCloud || await jsonp(`${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`);
-    elMap.debugBox.style.display = elMap.debugBox.style.display==='none' ? 'block' : 'none';
-    elMap.debugBox.textContent = JSON.stringify(j, null, 2);
-  }catch(e){
-    elMap.debugBox.style.display = 'block';
-    elMap.debugBox.textContent = 'Không lấy được JSON cloud: ' + e;
-  }
-};
 
 /* =================== Auto Sync =================== */
 function renderAll(){ renderSets(); renderCard(); renderList(); }
