@@ -31,7 +31,6 @@
   .list-item.active{background:var(--accent)}
   small{color:var(--muted)}
   .kpx{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
-  /* Badge trạng thái sync */
   #syncStatus{
     position:fixed; right:12px; bottom:12px; padding:8px 12px; border-radius:10px;
     background:rgba(15,23,42,.75); border:1px solid var(--border); font-size:.85rem;
@@ -40,6 +39,7 @@
   #syncStatus.ok { border-color:rgba(16,185,129,.45) }
   #syncStatus.work { border-color:rgba(56,189,248,.45) }
   #syncStatus.err { border-color:rgba(244,63,94,.55) }
+  #debugBox{white-space:pre-wrap; max-height:300px; overflow:auto; background:rgba(0,0,0,.35); padding:8px; border-radius:8px; display:none; margin-top:8px}
 </style>
 </head>
 <body>
@@ -60,7 +60,9 @@
         <button id="setAddBtn" class="btn" title="Tạo bộ thẻ mới">+ Bộ thẻ</button>
         <button id="setRenameBtn" class="btn" title="Đổi tên bộ thẻ">Đổi tên</button>
         <button id="setDeleteBtn" class="btn" title="Xóa bộ thẻ">Xóa bộ</button>
+        <button id="debugBtn" class="btn" title="Xem JSON cloud">📦</button>
       </div>
+      <div id="debugBox"></div>
     </div>
 
     <!-- Ô tìm kiếm + điều hướng thẻ -->
@@ -114,10 +116,9 @@
 </main>
 
 <footer>
-  © Ver 1.2 — Lưu tự động trong trình duyệt • Có IPA & phát âm • Đồng bộ nhiều người dùng
+  © Ver 1.3 — Lưu tự động trong trình duyệt • Có IPA & phát âm • Đồng bộ nhiều người dùng
 </footer>
 
-<!-- Badge trạng thái đồng bộ -->
 <div id="syncStatus" class="work">Đang khởi tạo…</div>
 
 <script>
@@ -129,10 +130,7 @@ let state = loadInitialState();
   state = {
     version: 4,
     activeSetId: 'set_xxx',
-    sets: [
-      { id:'set_1', name:'Bộ thẻ của tôi', cards:[{id,front,back,ipa,audio,example,known,unknown,last}, ...] },
-      ...
-    ]
+    sets: [ { id, name, cards:[{id,front,back,ipa,audio,example,known,unknown,last}] } ]
   }
 */
 function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); setDirty(); }
@@ -167,7 +165,7 @@ function loadInitialState(){
   return { version: 4, activeSetId: defaultSet.id, sets:[defaultSet] };
 }
 
-/* =================== Helpers chung =================== */
+/* =================== Helpers =================== */
 function uid(prefix=''){ return (prefix||'') + Math.random().toString(36).slice(2) + Date.now().toString(36) }
 function sampleCards(){
   return [
@@ -177,23 +175,23 @@ function sampleCards(){
 }
 function activeSet(){ return state.sets.find(s => s.id === state.activeSetId) }
 function currentCards(){ return activeSet()?.cards || [] }
-function setCards(newCards){ const s = activeSet(); if(!s) return; s.cards = newCards; }
-function currentCardById(id){ return currentCards().find(c=>c.id===id) }
+function indexOfCurrent(){ return currentCards().findIndex(c => c.id === currentId) }
 
-/* =================== Biến UI & sync =================== */
+/* =================== UI state =================== */
 let currentId = currentCards()[0]?.id || null;
 let flipped = false;
-let dirty = false;          // có thay đổi local chưa đẩy
+let dirty = false;
 let lastSync = 0;
 let pushTimer = null;
 
 const el = {
-  // Sets
   setSelect: document.getElementById('setSelect'),
   setAddBtn: document.getElementById('setAddBtn'),
   setRenameBtn: document.getElementById('setRenameBtn'),
   setDeleteBtn: document.getElementById('setDeleteBtn'),
-  // Cards UI
+  debugBtn: document.getElementById('debugBtn'),
+  debugBox: document.getElementById('debugBox'),
+
   search: document.getElementById('search'),
   card: document.getElementById('card'),
   cardContent: document.getElementById('cardContent'),
@@ -216,7 +214,7 @@ const el = {
   sync: document.getElementById('syncStatus'),
 };
 
-/* =================== Dictionary (IPA + audio) =================== */
+/* =================== Dictionary =================== */
 async function fetchDictionary(term){
   const q = String(term || '').trim();
   if(!q) return { ipa:'', audio:'', example:'', pos:[] };
@@ -244,7 +242,11 @@ async function fetchDictionary(term){
   }
 }
 
-/* =================== Render Sets & Cards =================== */
+/* =================== Render =================== */
+function escapeHTML(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
+function hhmmss(d=new Date()){ return d.toTimeString().slice(0,8) }
+
 function renderSets(){
   el.setSelect.innerHTML = '';
   state.sets.forEach(s=>{
@@ -253,16 +255,6 @@ function renderSets(){
     if(s.id === state.activeSetId) opt.selected = true;
     el.setSelect.appendChild(opt);
   });
-}
-function switchSet(id){
-  if(!state.sets.find(s=>s.id===id)) return;
-  state.activeSetId = id;
-  const cs = currentCards();
-  currentId = cs[0]?.id || null;
-  flipped = false;
-  saveState();
-  renderSets(); renderCard(); renderList();
-  setSync('Đang ở: ' + (activeSet()?.name || ''), 'ok');
 }
 function buildBackHTML(back, example){
   if(example){ return `${escapeHTML(back)}\n\n${wrapSmall('Ví dụ: ' + example)}`; }
@@ -296,9 +288,16 @@ function renderList(){
   el.stats.textContent = `Bộ: ${(activeSet()?.name)||''} • Tổng: ${total} • Đã thuộc: ${k} • Chưa thuộc: ${u}`;
 }
 
-/* =================== Card Actions =================== */
-function indexOfCurrent(){
-  return currentCards().findIndex(c => c.id === currentId);
+/* =================== Card actions =================== */
+function switchSet(id){
+  if(!state.sets.find(s=>s.id===id)) return;
+  state.activeSetId = id;
+  const cs = currentCards();
+  currentId = cs[0]?.id || null;
+  flipped = false;
+  saveState();
+  renderSets(); renderCard(); renderList();
+  setSync('Đang ở: ' + (activeSet()?.name || ''), 'ok');
 }
 function prevCard(){
   const cards = currentCards();
@@ -318,7 +317,7 @@ function deleteCurrent(){
   const cards = currentCards();
   const idx = indexOfCurrent();
   if(idx < 0) return;
-  const removed = cards.splice(idx, 1)[0];
+  cards.splice(idx, 1);
   saveState();
   if(cards.length){
     const next = idx < cards.length ? idx : cards.length - 1;
@@ -328,7 +327,6 @@ function deleteCurrent(){
   }
   flipped = false;
   renderCard(); renderList();
-  console.debug('Deleted card:', removed?.front);
 }
 function mark(isKnown){
   const c = currentCards().find(x=>x.id===currentId); if(!c) return;
@@ -350,15 +348,8 @@ async function enrichCardById(id, front){
   el.loading.hidden = true;
 }
 
-/* =================== Utils =================== */
-function escapeHTML(s){
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-function wrapSmall(s){ return `<small>${escapeHTML(s)}</small>` }
-function hhmmss(d=new Date()){ return d.toTimeString().slice(0,8) }
-
 /* =================== Cloud Sync (JSONP, chung cho mọi người) =================== */
-/* GIỮ NGUYÊN như bạn yêu cầu */
+/* GIỮ NGUYÊN */
 const API_URL   = 'https://script.google.com/macros/s/AKfycbwxNxcSug7Hn3HRKXWgdvi-SFc8Xbj53nS2u6YjimRfx2P2xhmjBLko2V7b0G7b-wCbMA/exec';
 const API_TOKEN = 'abcdefgh';
 
@@ -383,16 +374,11 @@ function b64webSafeFromJSON(obj){
   return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
 
-/* ===== Compact hóa ===== */
+/* Compact */
 function compactCards(cards){
   return (cards||[]).map(c => [
-    c.id || '',
-    c.front || '',
-    c.back || '',
-    c.ipa || '',
-    Number(c.known)||0,
-    Number(c.unknown)||0,
-    Number(c.last)||0
+    c.id || '', c.front || '', c.back || '', c.ipa || '',
+    Number(c.known)||0, Number(c.unknown)||0, Number(c.last)||0
   ]);
 }
 function expandCards(arr){
@@ -424,7 +410,7 @@ function buildStateFull(st){
   };
 }
 
-/* =================== Sync UI & Debounce =================== */
+/* Sync UI & Debounce */
 function setSync(text, cls='work'){
   el.sync.className = cls ? cls.replace(/^/,'') : '';
   el.sync.classList.add(cls);
@@ -441,12 +427,11 @@ function schedulePush(delay=1500){
   pushTimer = setTimeout(()=> cloudPush(true).catch(()=>{}), delay);
 }
 
-/* =================== Cloud: Pull/Push (đa bộ, giữ vị trí) =================== */
+/* ============ PULL: đọc đủ mọi format, giữ vị trí hiện tại ============ */
 async function cloudPull(silent=true){
   try{
     if(!silent) setSync('Đang tải từ cloud…','work');
 
-    // Ghi nhớ lựa chọn hiện tại để không “nhảy về đầu”
     const prevActiveSetId = state.activeSetId;
     const prevIndex = Math.max(0, indexOfCurrent());
     const prevId = currentId;
@@ -454,10 +439,14 @@ async function cloudPull(silent=true){
 
     const url = `${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`;
     const j = await jsonp(url);
+    (window.__lastCloud = j); // lưu cho nút debug
+
     if(!j || !j.ok){ setSync('Cloud pull thất bại', 'err'); throw new Error('pull-failed'); }
 
     if(!dirty){
-      /* ---- ƯU TIÊN 1: stateFull (mới) ---- */
+      let merged = false;
+
+      /* 1) stateFull: đủ sets + cards (compact) */
       if (j.stateFull && Array.isArray(j.stateFull.sets)) {
         const remote = j.stateFull;
         state = { version:4, activeSetId: remote.activeSetId || prevActiveSetId, sets: [] };
@@ -465,89 +454,111 @@ async function cloudPull(silent=true){
           id: rs.id, name: rs.name || 'Bộ mới',
           cards: expandCards(rs.cards || [])
         }));
+        merged = true;
       }
-      /* ---- ƯU TIÊN 2: state.sets[*].cards (backend cũ của bạn) ---- */
-      else if (j.state && Array.isArray(j.state.sets) && j.state.sets.some(s=>Array.isArray(s.cards))) {
+
+      /* 2) cardsBySet (object setId -> cards compact) + state (metadata) */
+      if (!merged && j.cardsBySet && typeof j.cardsBySet === 'object') {
+        const remoteSets = (j.state && Array.isArray(j.state.sets)) ? j.state.sets : (state.sets||[]);
+        const map = j.cardsBySet;
+        state = {
+          version: 4,
+          activeSetId: (j.state?.activeSetId) || prevActiveSetId,
+          sets: remoteSets.map(s => ({
+            id:s.id, name:s.name || 'Bộ mới',
+            cards: expandCards(map[s.id] || [])
+          }))
+        };
+        merged = true;
+      }
+
+      /* 3) dataAll: [{id, cards}] mới thêm cho tương thích backend cũ */
+      if (!merged && Array.isArray(j.dataAll)) {
+        const remoteSets = (j.state && Array.isArray(j.state.sets)) ? j.state.sets : (state.sets||[]);
+        const byId = Object.fromEntries(j.dataAll.map(x => [x.id, expandCards(x.cards||[])]));
+        state = {
+          version: 4,
+          activeSetId: (j.state?.activeSetId) || prevActiveSetId,
+          sets: remoteSets.map(s => ({
+            id:s.id, name:s.name || 'Bộ mới',
+            cards: byId[s.id] || []
+          }))
+        };
+        merged = true;
+      }
+
+      /* 4) state.sets[*].cards (backend trả thẳng trong state) */
+      if (!merged && j.state && Array.isArray(j.state.sets) && j.state.sets.some(s=>Array.isArray(s.cards))) {
         const remote = j.state;
         state = { version:4, activeSetId: remote.activeSetId || prevActiveSetId, sets: [] };
         state.sets = remote.sets.map(rs => ({
           id: rs.id, name: rs.name || 'Bộ mới',
           cards: Array.isArray(rs.cards) ? expandCards(rs.cards) : []
         }));
+        merged = true;
       }
-      /* ---- ƯU TIÊN 3: chỉ danh sách bộ, thẻ nằm riêng ---- */
-      else if (j.state) {
-        const remoteSets = Array.isArray(j.state.sets) ? j.state.sets : [];
-        const localById = Object.fromEntries((state.sets||[]).map(s=>[s.id,s]));
-        const mergedSets = remoteSets.map(s=>{
-          const old = localById[s.id];
-          return old ? { ...old, name: s.name||old.name } : { id:s.id, name:s.name||'Bộ mới', cards:[] };
-        });
-        for(const s of state.sets||[]){
-          if(!mergedSets.find(x=>x.id===s.id)) mergedSets.push(s);
-        }
-        state = {
-          version: 4,
-          activeSetId: mergedSets.find(x=>x.id===prevActiveSetId) ? prevActiveSetId : (j.state.activeSetId || mergedSets[0]?.id),
-          sets: mergedSets
-        };
 
-        // cardsBySet / cards / data
-        if (j.cardsBySet && typeof j.cardsBySet === 'object'){
-          for(const setId in j.cardsBySet){
-            const s = state.sets.find(x=>x.id===setId);
-            if(s){ s.cards = expandCards(j.cardsBySet[setId]); }
-          }
-        } else if (Array.isArray(j.cards)) {
-          const s = activeSet(); if(s){ s.cards = expandCards(j.cards); }
-        } else if (Array.isArray(j.data)) {
-          const s = activeSet(); if(s){ s.cards = j.data; }
-        }
-      }
-      /* ---- ƯU TIÊN 4: chỉ cards (rất cũ) ---- */
-      else if (Array.isArray(j.cards) || Array.isArray(j.data)) {
+      /* 5) legacy: chỉ cards/data (áp vào bộ đang active) */
+      if (!merged && (Array.isArray(j.cards) || Array.isArray(j.data))) {
         const s = activeSet();
         if(s){ s.cards = Array.isArray(j.cards) ? expandCards(j.cards) : j.data; }
+        merged = true;
       }
 
-      // Phục hồi thẻ đang xem
-      const cardsNow = currentCards();
-      let keepId = prevId;
-      if (!cardsNow.find(c=>c.id===keepId)) {
-        const idx = Math.min(prevIndex, Math.max(0, cardsNow.length-1));
-        keepId = cardsNow[idx]?.id || cardsNow[0]?.id || null;
-      }
-      currentId = keepId;
-      flipped = wasFlipped;
+      // Nếu vẫn chưa merged (rất hiếm) thì thôi chịu, giữ nguyên local.
+      // Phục hồi vị trí đang xem
+      if (merged) {
+        if(!state.activeSetId || !state.sets.find(x=>x.id===state.activeSetId)){
+          state.activeSetId = prevActiveSetId || state.sets[0]?.id;
+        }
+        const cardsNow = currentCards();
+        let keepId = prevId;
+        if (!cardsNow.find(c=>c.id===keepId)) {
+          const idx = Math.min(prevIndex, Math.max(0, cardsNow.length-1));
+          keepId = cardsNow[idx]?.id || cardsNow[0]?.id || null;
+        }
+        currentId = keepId;
+        flipped = wasFlipped;
 
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); // lưu nhưng KHÔNG setDirty
-      renderSets(); renderCard(); renderList();
-      lastSync = Date.now();
-      setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        renderSets(); renderCard(); renderList();
+        lastSync = Date.now();
+        setSync('Đã đồng bộ (pull) ' + hhmmss(new Date(lastSync)), 'ok');
+      }
     }
 
     return true;
   }catch(e){ console.error(e); setSync('Cloud pull lỗi mạng', 'err'); throw e; }
 }
 
+/* ============ PUSH: gửi đủ mọi format để backend lưu được toàn bộ ============ */
 async function cloudPush(silent=false){
   try{
-    // Gửi TOÀN BỘ bộ thẻ theo 2 dạng để backend cũ/mới đều hiểu:
-    // - stateFull: sets[*].cards đã compact
-    // - state (gọn): chỉ metadata (phòng khi backend ghi đè)
-    // - (tùy chọn) cardsBySet để tương thích thêm
     const compact = compactState(state);
     const stateFull = buildStateFull(state);
 
     const cardsBySet = {};
+    const dataAll = [];
     for(const s of state.sets){
-      cardsBySet[s.id] = compactCards(s.cards || []);
+      const packed = compactCards(s.cards || []);
+      cardsBySet[s.id] = packed;
+      dataAll.push({ id: s.id, cards: packed });
     }
+    // legacy cho backend rất cũ: chỉ một bộ active
+    const legacyCards = compactCards(currentCards());
 
-    const payload = { compact:true, state: compact, stateFull, cardsBySet };
+    const payload = {
+      compact: true,
+      state: compact,
+      stateFull,
+      cardsBySet,
+      dataAll,
+      // legacy:
+      cards: legacyCards,
+      data: legacyCards
+    };
     const dataB64 = b64webSafeFromJSON(payload);
 
-    // Giới hạn an toàn cho JSONP (URL)
     if (dataB64.length > 7500) {
       setSync('Dữ liệu lớn cho JSONP (tách bớt bộ / rút ngắn nội dung).', 'err');
       throw new Error('payload-too-large');
@@ -571,14 +582,13 @@ async function cloudPush(silent=false){
     if (String(e?.message).includes('payload-too-large')) {
       setSync('Push thất bại: URL quá dài (JSONP).', 'err');
     } else {
-      setSync('Cloud push lỗi mạng (có thể do URL dài).', 'err');
+      setSync('Cloud push lỗi mạng.', 'err');
     }
     throw e;
   }
 }
 
 /* =================== Events =================== */
-// Sets
 el.setSelect.onchange = ()=> switchSet(el.setSelect.value);
 el.setAddBtn.onclick = ()=>{
   const name = prompt('Tên bộ thẻ mới:', 'Bộ thẻ mới');
@@ -607,7 +617,6 @@ el.setDeleteBtn.onclick = ()=>{
   saveState(); renderSets(); renderCard(); renderList();
 };
 
-// Cards
 el.card.onclick = ()=>{ flipped = !flipped; renderCard(); };
 el.flipBtn.onclick = ()=>{ flipped = !flipped; renderCard(); };
 el.knownBtn.onclick = ()=> mark(true);
@@ -638,7 +647,6 @@ el.speakBtn.onclick = (e)=>{
     try{ const u = new SpeechSynthesisUtterance(c.front); u.lang='en-US'; u.rate=1; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(_){}
   }
 };
-
 window.addEventListener('keydown', (e)=>{
   const tag = e.target && e.target.tagName;
   if(tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -661,6 +669,18 @@ async function previewEnrichFront(){
   el.frontHint.innerHTML = d.ipa ? `<small>IPA gợi ý: ${escapeHTML(d.ipa)}</small>` : '';
   el.loading.hidden = true;
 }
+
+/* Nút debug: hiện JSON cloud */
+el.debugBtn.onclick = async ()=>{
+  try{
+    const j = window.__lastCloud || await jsonp(`${API_URL}?op=get&token=${encodeURIComponent(API_TOKEN)}`);
+    el.debugBox.style.display = el.debugBox.style.display==='none' ? 'block' : 'none';
+    el.debugBox.textContent = JSON.stringify(j, null, 2);
+  }catch(e){
+    el.debugBox.style.display = 'block';
+    el.debugBox.textContent = 'Không lấy được JSON cloud: ' + e;
+  }
+};
 
 /* =================== Khởi động + Auto Sync =================== */
 function renderAll(){ renderSets(); renderCard(); renderList(); }
@@ -685,7 +705,7 @@ function renderAll(){ renderSets(); renderCard(); renderList(); }
       cloudPull(true).catch(()=>{});
     }
   }
-  setInterval(autoSyncTick, 10_000); // 10 giây/lần
+  setInterval(autoSyncTick, 10_000);
 })();
 </script>
 </body>
